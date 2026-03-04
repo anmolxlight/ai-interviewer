@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useDispatch } from 'react-redux'
-import { Upload, Loader2, CheckCircle } from 'lucide-react'
+import { Upload, Loader2, CheckCircle, ArrowLeft, FileText } from 'lucide-react'
 import { Button } from './ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card'
 import { Input } from './ui/input'
@@ -15,9 +15,10 @@ interface CandidateData {
 
 interface ResumeUploadProps {
   onComplete: () => void
+  onBack: () => void
 }
 
-export function ResumeUpload({ onComplete }: ResumeUploadProps) {
+export function ResumeUpload({ onComplete, onBack }: ResumeUploadProps) {
   const dispatch = useDispatch()
   const [file, setFile] = useState<File | null>(null)
   const [candidateData, setCandidateData] = useState<CandidateData>({
@@ -28,16 +29,20 @@ export function ResumeUpload({ onComplete }: ResumeUploadProps) {
   const [isUploading, setIsUploading] = useState(false)
   const [uploadComplete, setUploadComplete] = useState(false)
   const [needsManualEntry, setNeedsManualEntry] = useState(false)
+  const [errorMsg, setErrorMsg] = useState<string | null>(null)
+  const [isDragOver, setIsDragOver] = useState(false)
 
-  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const selectedFile = e.target.files?.[0]
-    if (!selectedFile) return
-
+  const processFile = async (selectedFile: File) => {
     if (!selectedFile.name.endsWith('.pdf')) {
-      alert('Please upload a PDF file')
+      setErrorMsg('Please upload a PDF file')
+      return
+    }
+    if (selectedFile.size > 10 * 1024 * 1024) {
+      setErrorMsg('File size exceeds 10MB limit')
       return
     }
 
+    setErrorMsg(null)
     setFile(selectedFile)
     setIsUploading(true)
     dispatch(setLoading(true))
@@ -46,22 +51,14 @@ export function ResumeUpload({ onComplete }: ResumeUploadProps) {
       const formData = new FormData()
       formData.append('file', selectedFile)
 
-      const response = await axios.post(
-        '/api/upload-resume',
-        formData,
-        {
-          headers: {
-            'Content-Type': 'multipart/form-data'
-          }
-        }
-      )
+      const response = await axios.post('/api/upload-resume', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      })
 
       if (response.data.success) {
         const { candidate_info, resume_text } = response.data
-        
         dispatch(setResumeText(resume_text))
-        
-        // Check if any required field is missing
+
         if (
           candidate_info.name === 'Not provided' ||
           candidate_info.email === 'Not provided' ||
@@ -76,191 +73,188 @@ export function ResumeUpload({ onComplete }: ResumeUploadProps) {
         } else {
           dispatch(setCandidateInfo(candidate_info))
           setUploadComplete(true)
-          setTimeout(() => onComplete(), 1500)
+          setTimeout(() => onComplete(), 1200)
         }
       }
     } catch (error: any) {
       console.error('Upload error:', error)
-      console.error('Error details:', {
-        response: error.response,
-        request: error.request,
-        message: error.message,
-        config: error.config
-      })
-      
-      let errorMessage = 'Error uploading resume. Please try again.'
-      
+      let msg = 'Error uploading resume. Please try again.'
       if (error.response) {
-        // Backend returned an error
-        console.error('Backend error:', error.response.data)
         const detail = error.response.data?.detail
-        if (typeof detail === 'string') {
-          errorMessage = detail
-        } else if (Array.isArray(detail)) {
-          // Validation error from FastAPI
-          errorMessage = detail.map(e => e.msg).join(', ')
-        } else {
-          errorMessage = JSON.stringify(error.response.data)
-        }
+        if (typeof detail === 'string') msg = detail
+        else if (Array.isArray(detail)) msg = detail.map((e: any) => e.msg).join(', ')
       } else if (error.request) {
-        // Request was made but no response
-        console.error('No response from server')
-        errorMessage = 'Cannot connect to server. Please ensure the backend is running on http://localhost:8000'
-      } else {
-        // Something else happened
-        console.error('Request setup error:', error.message)
-        errorMessage = error.message || errorMessage
+        msg = 'Cannot connect to server. Please ensure the backend is running.'
       }
-      
-      alert(errorMessage)
+      setErrorMsg(msg)
     } finally {
       setIsUploading(false)
       dispatch(setLoading(false))
     }
   }
 
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const selectedFile = e.target.files?.[0]
+    if (selectedFile) processFile(selectedFile)
+  }
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault()
+    setIsDragOver(false)
+    const droppedFile = e.dataTransfer.files[0]
+    if (droppedFile) processFile(droppedFile)
+  }
+
   const handleManualSubmit = () => {
     if (!candidateData.name || !candidateData.email || !candidateData.phone) {
-      alert('Please fill in all required fields')
+      setErrorMsg('Please fill in all required fields')
       return
     }
-
     dispatch(setCandidateInfo(candidateData))
     setUploadComplete(true)
-    setTimeout(() => onComplete(), 1500)
+    setTimeout(() => onComplete(), 1200)
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 via-indigo-50 to-violet-100 p-4">
-      <style>{`
-        .upload-zone {
-          transition: all 0.3s ease;
-        }
-        .upload-zone:hover {
-          transform: scale(1.02);
-          border-color: rgb(99, 102, 241);
-        }
-      `}</style>
-      
-      <Card className="w-full max-w-2xl shadow-2xl border-0">
-        <CardHeader className="bg-gradient-to-r from-blue-500 via-indigo-500 to-violet-500 text-white rounded-t-xl">
-          <div className="flex items-center justify-center mb-4">
-            <Upload className="h-16 w-16" />
-          </div>
-          <CardTitle className="text-4xl text-center mb-2">Welcome to AI Interview Assistant</CardTitle>
-          <CardDescription className="text-blue-100 text-lg text-center">
-            Upload your resume to get started. Our AI will extract your information automatically.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="p-8 space-y-6">
-          {!needsManualEntry && !uploadComplete && (
-            <div className="upload-zone border-3 border-dashed border-gray-300 rounded-2xl p-12 text-center bg-gradient-to-br from-white to-gray-50">
-              <input
-                type="file"
-                accept=".pdf"
-                onChange={handleFileChange}
-                className="hidden"
-                id="resume-upload"
-                disabled={isUploading}
-              />
-              <label htmlFor="resume-upload" className="cursor-pointer">
-                <div className="flex flex-col items-center gap-6">
-                  {isUploading ? (
-                    <div className="relative">
-                      <Loader2 className="h-20 w-20 text-indigo-600 animate-spin" />
-                      <div className="absolute inset-0 flex items-center justify-center">
-                        <div className="h-12 w-12 bg-indigo-100 rounded-full"></div>
+    <div className="min-h-screen bg-background grain flex items-center justify-center p-4 relative overflow-hidden">
+      <div className="absolute top-[-200px] right-[-100px] w-[400px] h-[400px] rounded-full bg-primary/5 blur-[100px]" />
+
+      <div className="w-full max-w-2xl relative z-10">
+        <button onClick={onBack} className="flex items-center gap-2 text-muted-foreground hover:text-foreground transition-colors mb-6 text-sm">
+          <ArrowLeft className="h-4 w-4" />
+          Back
+        </button>
+
+        <Card className="border-border/50 bg-card/80 backdrop-blur-sm">
+          <CardHeader className="border-b border-border/50 pb-6">
+            <div className="flex items-center gap-3 mb-3">
+              <div className="h-10 w-10 rounded-xl bg-primary/10 flex items-center justify-center">
+                <Upload className="h-5 w-5 text-primary" />
+              </div>
+              <div>
+                <CardTitle className="font-display text-2xl">Upload Resume</CardTitle>
+                <CardDescription>Our AI will extract your information automatically</CardDescription>
+              </div>
+            </div>
+          </CardHeader>
+
+          <CardContent className="p-6 space-y-6">
+            {!needsManualEntry && !uploadComplete && (
+              <div
+                onDragOver={(e) => { e.preventDefault(); setIsDragOver(true) }}
+                onDragLeave={() => setIsDragOver(false)}
+                onDrop={handleDrop}
+                className={`border-2 border-dashed rounded-xl p-12 text-center transition-all duration-200 ${
+                  isDragOver ? 'border-primary bg-primary/5' : 'border-border hover:border-primary/50'
+                }`}
+              >
+                <input
+                  type="file"
+                  accept=".pdf"
+                  onChange={handleFileChange}
+                  className="hidden"
+                  id="resume-upload"
+                  disabled={isUploading}
+                />
+                <label htmlFor="resume-upload" className="cursor-pointer">
+                  <div className="flex flex-col items-center gap-4">
+                    {isUploading ? (
+                      <div className="h-16 w-16 rounded-2xl bg-primary/10 flex items-center justify-center">
+                        <Loader2 className="h-8 w-8 text-primary animate-spin" />
                       </div>
-                    </div>
-                  ) : (
-                    <div className="h-20 w-20 rounded-full bg-gradient-to-br from-indigo-500 to-violet-500 flex items-center justify-center shadow-lg">
-                      <Upload className="h-10 w-10 text-white" />
-                    </div>
-                  )}
-                  <div>
-                    <p className="text-2xl font-bold text-gray-800 mb-2">
-                      {isUploading ? 'Processing Your Resume...' : 'Click to Upload Resume'}
-                    </p>
-                    <p className="text-gray-600 mb-4">PDF format required (Max 10MB)</p>
-                    {isUploading && (
-                      <p className="text-sm text-indigo-600 animate-pulse">
-                        Using AI to extract your information...
+                    ) : file ? (
+                      <div className="h-16 w-16 rounded-2xl bg-primary/10 flex items-center justify-center">
+                        <FileText className="h-8 w-8 text-primary" />
+                      </div>
+                    ) : (
+                      <div className="h-16 w-16 rounded-2xl bg-secondary flex items-center justify-center">
+                        <Upload className="h-8 w-8 text-muted-foreground" />
+                      </div>
+                    )}
+                    <div>
+                      <p className="text-lg font-semibold text-foreground mb-1">
+                        {isUploading ? 'Processing resume...' : 'Drop your resume here or click to browse'}
                       </p>
+                      <p className="text-sm text-muted-foreground">PDF format, max 10MB</p>
+                      {isUploading && (
+                        <p className="text-sm text-primary mt-2 font-mono">Extracting information with AI...</p>
+                      )}
+                    </div>
+                    {file && !isUploading && (
+                      <div className="flex items-center gap-2 bg-primary/10 px-3 py-1.5 rounded-full">
+                        <FileText className="h-4 w-4 text-primary" />
+                        <span className="text-sm font-medium text-primary">{file.name}</span>
+                      </div>
                     )}
                   </div>
-                  {file && !isUploading && (
-                    <div className="flex items-center gap-2 bg-indigo-50 px-4 py-2 rounded-full">
-                      <CheckCircle className="h-5 w-5 text-indigo-600" />
-                      <span className="text-sm font-medium text-indigo-900">{file.name}</span>
-                    </div>
-                  )}
-                </div>
-              </label>
-            </div>
-          )}
+                </label>
+              </div>
+            )}
 
-          {needsManualEntry && !uploadComplete && (
-            <div className="space-y-6">
-              <div className="bg-amber-50 border-l-4 border-amber-500 p-4 rounded">
-                <p className="text-sm text-amber-800 font-medium">
-                  We couldn't extract all information from your resume. Please complete the missing fields below:
-                </p>
+            {needsManualEntry && !uploadComplete && (
+              <div className="space-y-5 animate-in">
+                <div className="bg-accent/10 border border-accent/20 p-4 rounded-lg">
+                  <p className="text-sm text-accent font-medium">
+                    We couldn't extract all information. Please complete the missing fields:
+                  </p>
+                </div>
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-sm font-medium mb-2 text-foreground/80">Full Name</label>
+                    <Input
+                      value={candidateData.name}
+                      onChange={(e) => setCandidateData({ ...candidateData, name: e.target.value })}
+                      placeholder="John Doe"
+                      className="h-11 bg-secondary/50"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium mb-2 text-foreground/80">Email Address</label>
+                    <Input
+                      type="email"
+                      value={candidateData.email}
+                      onChange={(e) => setCandidateData({ ...candidateData, email: e.target.value })}
+                      placeholder="john@example.com"
+                      className="h-11 bg-secondary/50"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium mb-2 text-foreground/80">Phone Number</label>
+                    <Input
+                      type="tel"
+                      value={candidateData.phone}
+                      onChange={(e) => setCandidateData({ ...candidateData, phone: e.target.value })}
+                      placeholder="+1 (555) 123-4567"
+                      className="h-11 bg-secondary/50"
+                    />
+                  </div>
+                </div>
+                <Button onClick={handleManualSubmit} className="w-full h-11">
+                  Continue
+                </Button>
               </div>
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-sm font-semibold mb-2 text-gray-700">Full Name *</label>
-                  <Input
-                    value={candidateData.name}
-                    onChange={(e) => setCandidateData({ ...candidateData, name: e.target.value })}
-                    placeholder="John Doe"
-                    className="h-12 text-base"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-semibold mb-2 text-gray-700">Email Address *</label>
-                  <Input
-                    type="email"
-                    value={candidateData.email}
-                    onChange={(e) => setCandidateData({ ...candidateData, email: e.target.value })}
-                    placeholder="john@example.com"
-                    className="h-12 text-base"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-semibold mb-2 text-gray-700">Phone Number *</label>
-                  <Input
-                    type="tel"
-                    value={candidateData.phone}
-                    onChange={(e) => setCandidateData({ ...candidateData, phone: e.target.value })}
-                    placeholder="+1 (555) 123-4567"
-                    className="h-12 text-base"
-                  />
-                </div>
-              </div>
-              <Button 
-                onClick={handleManualSubmit} 
-                className="w-full h-12 text-lg bg-gradient-to-r from-indigo-500 to-violet-500 hover:from-indigo-600 hover:to-violet-600 shadow-lg"
-              >
-                Continue to Interview →
-              </Button>
-            </div>
-          )}
+            )}
 
-          {uploadComplete && (
-            <div className="flex flex-col items-center gap-6 py-12 bg-gradient-to-br from-green-50 to-emerald-50 rounded-2xl">
-              <div className="relative">
-                <CheckCircle className="h-24 w-24 text-green-500" />
-                <div className="absolute inset-0 h-24 w-24 bg-green-400 rounded-full animate-ping opacity-20"></div>
+            {uploadComplete && (
+              <div className="flex flex-col items-center gap-4 py-12 animate-in">
+                <div className="h-16 w-16 rounded-2xl bg-primary/10 flex items-center justify-center">
+                  <CheckCircle className="h-8 w-8 text-primary" />
+                </div>
+                <div className="text-center">
+                  <p className="text-xl font-display font-bold text-foreground mb-1">Resume processed</p>
+                  <p className="text-sm text-muted-foreground">Preparing your interview...</p>
+                </div>
               </div>
-              <div className="text-center">
-                <p className="text-2xl font-bold text-gray-800 mb-2">Resume Uploaded Successfully!</p>
-                <p className="text-gray-600">Preparing your personalized interview experience...</p>
+            )}
+
+            {errorMsg && (
+              <div className="bg-destructive/10 border border-destructive/20 p-4 rounded-lg">
+                <p className="text-sm text-destructive">{errorMsg}</p>
               </div>
-            </div>
-          )}
-        </CardContent>
-      </Card>
+            )}
+          </CardContent>
+        </Card>
+      </div>
     </div>
   )
 }
-

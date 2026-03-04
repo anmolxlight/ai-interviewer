@@ -1,7 +1,8 @@
-import { useState } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useSelector, useDispatch } from 'react-redux'
 import { RootState } from './store/store'
-import { startInterview, InterviewMode } from './store/slices/interviewSlice'
+import { startInterview, resetInterview, InterviewMode } from './store/slices/interviewSlice'
+import { resetCandidate } from './store/slices/candidateSlice'
 import { ResumeUpload } from './components/ResumeUpload'
 import { RoleSelection } from './components/RoleSelection'
 import { InterviewModeSelector } from './components/InterviewModeSelector'
@@ -10,7 +11,7 @@ import { VoiceInterview } from './components/VoiceInterview'
 import { LiveInterview } from './components/LiveInterview'
 import { Dashboard } from './components/Dashboard'
 import { Button } from './components/ui/button'
-import { Users, UserCircle, Sparkles, Zap, Target, TrendingUp } from 'lucide-react'
+import { Users, UserCircle, Sparkles, Zap, Target, TrendingUp, ArrowLeft } from 'lucide-react'
 
 type AppMode = 'candidate' | 'interviewer'
 type CandidateStep = 'upload' | 'role-select' | 'mode-select' | 'interview'
@@ -23,230 +24,182 @@ function App() {
   const { candidateInfo, selectedRole } = useSelector((state: RootState) => state.candidate)
   const { currentSession } = useSelector((state: RootState) => state.interview)
 
-  // Landing page - choose role
+  useEffect(() => {
+    if (appMode === 'candidate') {
+      if (currentSession && !currentSession.isCompleted && candidateInfo && selectedRole) {
+        setCandidateStep('interview')
+      } else if (selectedRole && candidateInfo) {
+        setCandidateStep('mode-select')
+      } else if (candidateInfo) {
+        setCandidateStep('role-select')
+      } else {
+        setCandidateStep('upload')
+      }
+    }
+  }, [appMode, candidateInfo, selectedRole, currentSession])
+
+  const handleStartFresh = useCallback(() => {
+    dispatch(resetInterview())
+    dispatch(resetCandidate())
+    setCandidateStep('upload')
+    setAppMode(null)
+  }, [dispatch])
+
+  const handleBack = useCallback(() => {
+    if (candidateStep === 'role-select') {
+      dispatch(resetCandidate())
+      setCandidateStep('upload')
+    } else if (candidateStep === 'mode-select') {
+      dispatch(resetInterview())
+      setCandidateStep('role-select')
+    } else if (candidateStep === 'interview') {
+      dispatch(resetInterview())
+      setCandidateStep('mode-select')
+    }
+  }, [candidateStep, dispatch])
+
   if (!appMode) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-indigo-900 via-purple-900 to-pink-900 relative overflow-hidden">
-        <style>{`
-          @keyframes float {
-            0%, 100% { transform: translateY(0px) rotate(0deg); }
-            50% { transform: translateY(-20px) rotate(5deg); }
-          }
-          @keyframes glow {
-            0%, 100% { opacity: 0.5; }
-            50% { opacity: 1; }
-          }
-          .float-animation { animation: float 6s ease-in-out infinite; }
-          .glow-animation { animation: glow 3s ease-in-out infinite; }
-          .gradient-text {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            background-clip: text;
-          }
-          .glass-effect {
-            background: rgba(255, 255, 255, 0.1);
-            backdrop-filter: blur(10px);
-            border: 1px solid rgba(255, 255, 255, 0.2);
-          }
-          .hover-lift {
-            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-          }
-          .hover-lift:hover {
-            transform: translateY(-10px) scale(1.02);
-            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
-          }
-        `}</style>
-
-        {/* Animated background elements */}
+      <div className="min-h-screen bg-background grain relative overflow-hidden">
         <div className="absolute inset-0 overflow-hidden pointer-events-none">
-          <div className="absolute top-20 left-20 w-72 h-72 bg-purple-500 rounded-full mix-blend-multiply filter blur-xl opacity-20 float-animation"></div>
-          <div className="absolute top-40 right-20 w-72 h-72 bg-pink-500 rounded-full mix-blend-multiply filter blur-xl opacity-20 float-animation" style={{ animationDelay: '2s' }}></div>
-          <div className="absolute -bottom-8 left-40 w-72 h-72 bg-indigo-500 rounded-full mix-blend-multiply filter blur-xl opacity-20 float-animation" style={{ animationDelay: '4s' }}></div>
+          <div className="absolute top-[-200px] left-[-100px] w-[500px] h-[500px] rounded-full bg-primary/5 blur-[120px]" />
+          <div className="absolute bottom-[-200px] right-[-100px] w-[500px] h-[500px] rounded-full bg-accent/5 blur-[120px]" />
         </div>
 
         <div className="relative z-10 min-h-screen flex flex-col items-center justify-center p-4">
-          {/* Header */}
-          <div className="text-center mb-16 max-w-4xl">
-            <div className="flex items-center justify-center mb-6">
-              <div className="relative">
-                <Sparkles className="h-16 w-16 text-yellow-400 glow-animation" />
-                <div className="absolute -top-2 -right-2 h-6 w-6 bg-yellow-400 rounded-full animate-ping"></div>
-              </div>
+          <div className="text-center mb-16 max-w-3xl animate-in">
+            <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full glass mb-8">
+              <Sparkles className="h-4 w-4 text-primary" />
+              <span className="text-sm font-mono text-muted-foreground">Powered by Gemini AI</span>
             </div>
-            <h1 className="text-6xl md:text-7xl font-bold mb-6 text-white leading-tight">
-              AI Interview
-              <span className="block mt-2 bg-gradient-to-r from-yellow-400 via-pink-400 to-purple-400 bg-clip-text text-transparent">
-                Assistant
-              </span>
+            <h1 className="font-display text-6xl md:text-8xl font-800 mb-6 tracking-tight leading-[0.9]">
+              <span className="text-foreground">AI Interview</span>
+              <br />
+              <span className="text-gradient-cyan">Assistant</span>
             </h1>
-            <p className="text-xl md:text-2xl text-gray-300 mb-8 leading-relaxed">
-              Experience the future of technical interviews with AI-powered real-time conversations
+            <p className="text-lg md:text-xl text-muted-foreground max-w-xl mx-auto leading-relaxed">
+              Technical interviews reimagined with real-time AI evaluation, voice conversations, and live coding assessment.
             </p>
-            
-            {/* Feature badges */}
-            <div className="flex flex-wrap items-center justify-center gap-4 mb-8">
-              <div className="glass-effect rounded-full px-4 py-2 text-white text-sm flex items-center gap-2">
-                <Zap className="h-4 w-4 text-yellow-400" />
-                Real-time AI
-              </div>
-              <div className="glass-effect rounded-full px-4 py-2 text-white text-sm flex items-center gap-2">
-                <Target className="h-4 w-4 text-green-400" />
-                Role-specific
-              </div>
-              <div className="glass-effect rounded-full px-4 py-2 text-white text-sm flex items-center gap-2">
-                <TrendingUp className="h-4 w-4 text-blue-400" />
-                Instant Feedback
-              </div>
-            </div>
           </div>
 
-          {/* Role selection cards */}
-          <div className="grid md:grid-cols-2 gap-8 w-full max-w-5xl">
-            {/* Candidate Card */}
-            <div
+          <div className="flex flex-wrap items-center justify-center gap-3 mb-12 animate-in animate-in-delay-1">
+            {[
+              { icon: Zap, label: 'Real-time AI', color: 'text-primary' },
+              { icon: Target, label: 'Role-specific', color: 'text-accent' },
+              { icon: TrendingUp, label: 'Instant Feedback', color: 'text-cyan-400' },
+            ].map(({ icon: Icon, label, color }) => (
+              <div key={label} className="glass rounded-full px-4 py-2 flex items-center gap-2">
+                <Icon className={`h-4 w-4 ${color}`} />
+                <span className="text-sm text-foreground/70">{label}</span>
+              </div>
+            ))}
+          </div>
+
+          <div className="grid md:grid-cols-2 gap-6 w-full max-w-4xl">
+            <button
               onClick={() => setAppMode('candidate')}
-              className="glass-effect rounded-3xl p-8 cursor-pointer hover-lift group relative overflow-hidden"
+              className="glass-strong rounded-2xl p-8 text-left group relative overflow-hidden transition-all duration-300 hover:scale-[1.02] hover:glow-cyan animate-in animate-in-delay-2"
             >
-              <div className="absolute top-0 right-0 w-32 h-32 bg-gradient-to-br from-blue-400 to-purple-500 rounded-full filter blur-3xl opacity-0 group-hover:opacity-30 transition-opacity duration-500"></div>
-              
+              <div className="absolute top-0 right-0 w-40 h-40 bg-primary/5 rounded-full blur-[60px] transition-opacity duration-500 opacity-0 group-hover:opacity-100" />
               <div className="relative z-10">
-                <div className="flex items-center justify-center mb-6">
-                  <div className="h-24 w-24 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center transform group-hover:scale-110 transition-transform duration-300">
-                    <UserCircle className="h-14 w-14 text-white" />
-                  </div>
+                <div className="h-16 w-16 rounded-2xl bg-primary/10 flex items-center justify-center mb-6 group-hover:bg-primary/20 transition-colors">
+                  <UserCircle className="h-8 w-8 text-primary" />
                 </div>
-                
-                <h2 className="text-3xl font-bold text-white mb-4 text-center">I'm a Candidate</h2>
-                <p className="text-gray-300 text-center mb-6 leading-relaxed">
-                  Upload your resume and experience an AI-powered interview tailored to your role
+                <h2 className="font-display text-2xl font-bold text-foreground mb-2">I'm a Candidate</h2>
+                <p className="text-muted-foreground mb-6 leading-relaxed text-sm">
+                  Upload your resume and experience an AI-powered interview tailored to your role.
                 </p>
-                
-                <ul className="space-y-3 mb-8">
-                  <li className="flex items-start gap-3 text-gray-200">
-                    <svg className="h-6 w-6 text-green-400 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                    </svg>
-                    <span>Smart resume analysis</span>
-                  </li>
-                  <li className="flex items-start gap-3 text-gray-200">
-                    <svg className="h-6 w-6 text-green-400 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                    </svg>
-                    <span>Role-specific questions</span>
-                  </li>
-                  <li className="flex items-start gap-3 text-gray-200">
-                    <svg className="h-6 w-6 text-green-400 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                    </svg>
-                    <span>Real-time AI evaluation</span>
-                  </li>
-                </ul>
-                
-                <Button 
-                  className="w-full h-12 text-lg font-semibold bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 shadow-lg transform group-hover:scale-105 transition-transform"
-                >
-                  Start Interview →
-                </Button>
+                <div className="space-y-2 mb-6">
+                  {['Smart resume analysis', 'Role-specific questions', 'Real-time AI evaluation'].map(item => (
+                    <div key={item} className="flex items-center gap-2 text-sm text-foreground/60">
+                      <div className="h-1.5 w-1.5 rounded-full bg-primary" />
+                      {item}
+                    </div>
+                  ))}
+                </div>
+                <div className="flex items-center gap-2 text-primary font-semibold text-sm">
+                  Start Interview
+                  <ArrowLeft className="h-4 w-4 rotate-180 group-hover:translate-x-1 transition-transform" />
+                </div>
               </div>
-            </div>
+            </button>
 
-            {/* Interviewer Card */}
-            <div
+            <button
               onClick={() => setAppMode('interviewer')}
-              className="glass-effect rounded-3xl p-8 cursor-pointer hover-lift group relative overflow-hidden"
+              className="glass-strong rounded-2xl p-8 text-left group relative overflow-hidden transition-all duration-300 hover:scale-[1.02] hover:glow-amber animate-in animate-in-delay-3"
             >
-              <div className="absolute top-0 right-0 w-32 h-32 bg-gradient-to-br from-orange-400 to-pink-500 rounded-full filter blur-3xl opacity-0 group-hover:opacity-30 transition-opacity duration-500"></div>
-              
+              <div className="absolute top-0 right-0 w-40 h-40 bg-accent/5 rounded-full blur-[60px] transition-opacity duration-500 opacity-0 group-hover:opacity-100" />
               <div className="relative z-10">
-                <div className="flex items-center justify-center mb-6">
-                  <div className="h-24 w-24 rounded-full bg-gradient-to-br from-orange-500 to-pink-600 flex items-center justify-center transform group-hover:scale-110 transition-transform duration-300">
-                    <Users className="h-14 w-14 text-white" />
-                  </div>
+                <div className="h-16 w-16 rounded-2xl bg-accent/10 flex items-center justify-center mb-6 group-hover:bg-accent/20 transition-colors">
+                  <Users className="h-8 w-8 text-accent" />
                 </div>
-                
-                <h2 className="text-3xl font-bold text-white mb-4 text-center">I'm an Interviewer</h2>
-                <p className="text-gray-300 text-center mb-6 leading-relaxed">
-                  Review candidate interviews with comprehensive AI-generated insights
+                <h2 className="font-display text-2xl font-bold text-foreground mb-2">I'm an Interviewer</h2>
+                <p className="text-muted-foreground mb-6 leading-relaxed text-sm">
+                  Review candidate interviews with comprehensive AI-generated insights and analytics.
                 </p>
-                
-                <ul className="space-y-3 mb-8">
-                  <li className="flex items-start gap-3 text-gray-200">
-                    <svg className="h-6 w-6 text-green-400 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                    </svg>
-                    <span>Comprehensive dashboard</span>
-                  </li>
-                  <li className="flex items-start gap-3 text-gray-200">
-                    <svg className="h-6 w-6 text-green-400 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                    </svg>
-                    <span>AI-powered insights</span>
-                  </li>
-                  <li className="flex items-start gap-3 text-gray-200">
-                    <svg className="h-6 w-6 text-green-400 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                    </svg>
-                    <span>Full transcripts</span>
-                  </li>
-                </ul>
-                
-                <Button 
-                  className="w-full h-12 text-lg font-semibold bg-gradient-to-r from-orange-500 to-pink-600 hover:from-orange-600 hover:to-pink-700 shadow-lg transform group-hover:scale-105 transition-transform"
-                >
-                  View Dashboard →
-                </Button>
+                <div className="space-y-2 mb-6">
+                  {['Comprehensive dashboard', 'AI-powered insights', 'Full transcripts'].map(item => (
+                    <div key={item} className="flex items-center gap-2 text-sm text-foreground/60">
+                      <div className="h-1.5 w-1.5 rounded-full bg-accent" />
+                      {item}
+                    </div>
+                  ))}
+                </div>
+                <div className="flex items-center gap-2 text-accent font-semibold text-sm">
+                  View Dashboard
+                  <ArrowLeft className="h-4 w-4 rotate-180 group-hover:translate-x-1 transition-transform" />
+                </div>
               </div>
-            </div>
+            </button>
           </div>
 
-          {/* Footer */}
-          <div className="mt-16 text-center">
-            <p className="text-gray-400 text-sm">
-              Powered by Google Gemini AI • Secure & Private
-            </p>
-          </div>
+          <p className="mt-12 text-muted-foreground/50 text-xs font-mono animate-in animate-in-delay-4">
+            Secure & Private • Google Gemini AI
+          </p>
         </div>
       </div>
     )
   }
 
-  // Interviewer Dashboard
   if (appMode === 'interviewer') {
-    return <Dashboard />
+    return <Dashboard onBack={handleStartFresh} />
   }
 
-  // Candidate Flow
-  if (candidateStep === 'upload' && !candidateInfo) {
-    return <ResumeUpload onComplete={() => setCandidateStep('role-select')} />
+  if (candidateStep === 'upload') {
+    return <ResumeUpload onComplete={() => setCandidateStep('role-select')} onBack={handleStartFresh} />
   }
 
-  if (candidateStep === 'role-select' && !selectedRole) {
-    return <RoleSelection onComplete={() => setCandidateStep('mode-select')} />
+  if (candidateStep === 'role-select') {
+    return <RoleSelection onComplete={() => setCandidateStep('mode-select')} onBack={() => { dispatch(resetCandidate()); setCandidateStep('upload') }} />
   }
 
-  if (candidateStep === 'mode-select' && !currentSession) {
+  if (candidateStep === 'mode-select') {
     return (
       <InterviewModeSelector
         onModeSelect={(mode: InterviewMode) => {
           dispatch(startInterview({ mode }))
           setCandidateStep('interview')
         }}
+        onBack={handleBack}
       />
     )
   }
 
   if (candidateStep === 'interview' && currentSession) {
-    if (currentSession.mode === 'chat') {
-      return <ChatInterview />
-    } else if (currentSession.mode === 'voice') {
-      return <VoiceInterview />
-    } else if (currentSession.mode === 'live') {
-      return <LiveInterview />
-    }
+    const interviewProps = { onStartFresh: handleStartFresh }
+    if (currentSession.mode === 'chat') return <ChatInterview {...interviewProps} />
+    if (currentSession.mode === 'voice') return <VoiceInterview {...interviewProps} />
+    if (currentSession.mode === 'live') return <LiveInterview {...interviewProps} />
   }
 
-  return <div>Loading...</div>
+  return (
+    <div className="min-h-screen bg-background flex items-center justify-center">
+      <div className="text-center">
+        <p className="text-muted-foreground mb-4">Something went wrong.</p>
+        <Button onClick={handleStartFresh} variant="outline">Start Over</Button>
+      </div>
+    </div>
+  )
 }
 
 export default App
