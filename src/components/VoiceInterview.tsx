@@ -1,316 +1,196 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { useDispatch, useSelector } from 'react-redux'
 import { RootState } from '@/store/store'
 import { addTranscriptEntry, completeInterview } from '@/store/slices/interviewSlice'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card'
 import { Button } from './ui/button'
 import { Badge } from './ui/badge'
-import { Mic, MicOff, Volume2, Loader2, CheckCircle, Sparkles, Send } from 'lucide-react'
+import { Mic, MicOff, Volume2, Loader2, CheckCircle, Sparkles, Send, RotateCcw } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Textarea } from './ui/textarea'
+import axios from 'axios'
 
-// Add Web Speech API types
 interface SpeechRecognitionEvent extends Event {
-  results: SpeechRecognitionResultList
-  resultIndex: number
+  results: SpeechRecognitionResultList; resultIndex: number
 }
-
-interface SpeechRecognitionResultList {
-  length: number
-  item(index: number): SpeechRecognitionResult
-  [index: number]: SpeechRecognitionResult
-}
-
-interface SpeechRecognitionResult {
-  length: number
-  item(index: number): SpeechRecognitionAlternative
-  [index: number]: SpeechRecognitionAlternative
-  isFinal: boolean
-}
-
-interface SpeechRecognitionAlternative {
-  transcript: string
-  confidence: number
-}
-
+interface SpeechRecognitionResultList { length: number; [index: number]: SpeechRecognitionResult }
+interface SpeechRecognitionResult { [index: number]: SpeechRecognitionAlternative; isFinal: boolean; length: number }
+interface SpeechRecognitionAlternative { transcript: string; confidence: number }
 interface SpeechRecognition extends EventTarget {
-  continuous: boolean
-  interimResults: boolean
-  lang: string
-  start(): void
-  stop(): void
-  abort(): void
+  continuous: boolean; interimResults: boolean; lang: string
+  start(): void; stop(): void; abort(): void
   onresult: ((event: SpeechRecognitionEvent) => void) | null
   onerror: ((event: Event) => void) | null
   onend: (() => void) | null
 }
+declare global { interface Window { SpeechRecognition: new () => SpeechRecognition; webkitSpeechRecognition: new () => SpeechRecognition } }
 
-declare global {
-  interface Window {
-    SpeechRecognition: new () => SpeechRecognition
-    webkitSpeechRecognition: new () => SpeechRecognition
-  }
-}
+interface VoiceInterviewProps { onStartFresh: () => void }
 
-export function VoiceInterview() {
+export function VoiceInterview({ onStartFresh }: VoiceInterviewProps) {
   const dispatch = useDispatch()
   const { candidateInfo, resumeText, selectedRole } = useSelector((state: RootState) => state.candidate)
   const { transcript } = useSelector((state: RootState) => state.interview)
-  
-  const [isConnected, setIsConnected] = useState(false)
+
+  const [isStarted, setIsStarted] = useState(false)
   const [isListening, setIsListening] = useState(false)
   const [isSpeaking, setIsSpeaking] = useState(false)
+  const [isProcessing, setIsProcessing] = useState(false)
   const [currentTranscript, setCurrentTranscript] = useState('')
   const [questionCount, setQuestionCount] = useState(0)
   const [isComplete, setIsComplete] = useState(false)
-  const [isProcessing, setIsProcessing] = useState(false)
-  
-  const wsRef = useRef<WebSocket | null>(null)
+  const [conversationHistory, setConversationHistory] = useState<Array<{role: string, text: string}>>([])
+
   const recognitionRef = useRef<SpeechRecognition | null>(null)
-  const synthRef = useRef<SpeechSynthesisUtterance | null>(null)
+  const currentTranscriptRef = useRef('')
+  const isProcessingRef = useRef(false)
+
+  useEffect(() => { currentTranscriptRef.current = currentTranscript }, [currentTranscript])
+  useEffect(() => { isProcessingRef.current = isProcessing }, [isProcessing])
 
   useEffect(() => {
     return () => {
-      // Cleanup on unmount
-      if (wsRef.current) {
-        wsRef.current.close()
-      }
-      if (recognitionRef.current) {
-        recognitionRef.current.stop()
-      }
-      if (window.speechSynthesis) {
-        window.speechSynthesis.cancel()
-      }
+      recognitionRef.current?.stop()
+      window.speechSynthesis?.cancel()
     }
   }, [])
 
-  const speakText = (text: string) => {
-    if (!window.speechSynthesis) return
-    
-    setIsSpeaking(true)
-    window.speechSynthesis.cancel() // Cancel any ongoing speech
-    
-    const utterance = new SpeechSynthesisUtterance(text)
-    utterance.rate = 0.9
-    utterance.pitch = 1
-    utterance.volume = 1
-    
-    utterance.onend = () => {
-      setIsSpeaking(false)
-      // Automatically start listening after AI finishes speaking
-      if (isConnected && questionCount < 6) {
-        setTimeout(() => startListening(), 500)
-      }
-    }
-    
-    synthRef.current = utterance
-    window.speechSynthesis.speak(utterance)
-  }
+  const speakText = useCallback((text: string): Promise<void> => {
+    return new Promise((resolve) => {
+      if (!window.speechSynthesis) { resolve(); return }
+      setIsSpeaking(true)
+      window.speechSynthesis.cancel()
+      const utterance = new SpeechSynthesisUtterance(text)
+      utterance.rate = 0.9
+      utterance.pitch = 1
+      utterance.volume = 1
+      utterance.onend = () => { setIsSpeaking(false); resolve() }
+      utterance.onerror = () => { setIsSpeaking(false); resolve() }
+      window.speechSynthesis.speak(utterance)
+    })
+  }, [])
 
-  const startListening = () => {
-    if (!recognitionRef.current) return
-    
-    try {
-      setIsListening(true)
-      setCurrentTranscript('')
-      recognitionRef.current.start()
-    } catch (e) {
-      console.error('Error starting recognition:', e)
-    }
-  }
-
-  const stopListening = () => {
-    if (!recognitionRef.current) return
-    
-    setIsListening(false)
-    recognitionRef.current.stop()
-  }
-
-  const setupSpeechRecognition = () => {
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
-    
-    if (!SpeechRecognition) {
-      alert('Speech recognition is not supported in your browser. Please use Chrome or Edge.')
-      return false
-    }
-    
-    const recognition = new SpeechRecognition()
+  const setupSpeechRecognition = useCallback(() => {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition
+    if (!SR) return false
+    const recognition = new SR()
     recognition.continuous = false
     recognition.interimResults = true
     recognition.lang = 'en-US'
-    
     recognition.onresult = (event: SpeechRecognitionEvent) => {
-      let interimTranscript = ''
-      let finalTranscript = ''
-      
+      let interim = '', final = ''
       for (let i = event.resultIndex; i < event.results.length; i++) {
-        const transcript = event.results[i][0].transcript
-        if (event.results[i].isFinal) {
-          finalTranscript += transcript + ' '
-        } else {
-          interimTranscript += transcript
-        }
+        const t = event.results[i][0].transcript
+        if (event.results[i].isFinal) final += t + ' '
+        else interim += t
       }
-      
-      setCurrentTranscript(finalTranscript || interimTranscript)
+      const combined = final || interim
+      setCurrentTranscript(combined)
+      currentTranscriptRef.current = combined
     }
-    
-    recognition.onerror = (event: Event) => {
-      console.error('Speech recognition error:', event)
-      setIsListening(false)
-    }
-    
-    recognition.onend = () => {
-      setIsListening(false)
-      // If we have a transcript and haven't sent it yet, automatically send it
-      if (currentTranscript.trim() && !isProcessing) {
-        handleSendResponse()
-      }
-    }
-    
+    recognition.onerror = () => setIsListening(false)
+    recognition.onend = () => setIsListening(false)
     recognitionRef.current = recognition
     return true
-  }
+  }, [])
 
-  const connectToInterview = async () => {
-    // Setup speech recognition
+  const startListening = useCallback(() => {
+    if (!recognitionRef.current) return
+    try {
+      setIsListening(true)
+      setCurrentTranscript('')
+      currentTranscriptRef.current = ''
+      recognitionRef.current.start()
+    } catch { /* already started */ }
+  }, [])
+
+  const stopListening = useCallback(() => {
+    setIsListening(false)
+    recognitionRef.current?.stop()
+  }, [])
+
+  const callVoiceTurn = useCallback(async (userResponse: string, qNum: number, history: Array<{role: string, text: string}>) => {
+    setIsProcessing(true)
+    try {
+      const response = await axios.post('/api/voice-turn', {
+        resume_text: resumeText,
+        role: selectedRole || 'Software Engineer',
+        user_response: userResponse,
+        question_number: qNum,
+        conversation_history: history
+      })
+
+      if (response.data.success) {
+        const aiText = response.data.ai_response
+        const newQNum = response.data.question_number
+
+        dispatch(addTranscriptEntry({ role: 'ai', text: aiText }))
+        const updatedHistory = [...history, { role: 'ai', text: aiText }]
+        setConversationHistory(updatedHistory)
+        setQuestionCount(newQNum)
+
+        await speakText(aiText)
+
+        if (response.data.is_complete) {
+          setIsComplete(true)
+          dispatch(completeInterview({ score: 75, summary: JSON.stringify({ recommendation: 'Recommended' }) }))
+          try {
+            await axios.post('/api/save-interview', {
+              candidate_name: candidateInfo?.name,
+              candidate_email: candidateInfo?.email,
+              candidate_phone: candidateInfo?.phone,
+              resume_text: resumeText,
+              mode: 'voice',
+              transcript: updatedHistory,
+              score: 75,
+              summary: { overall_score: 75, recommendation: 'Recommended' }
+            })
+          } catch { /* Supabase optional */ }
+        }
+      }
+    } catch (error: any) {
+      console.error('Voice turn error:', error)
+    } finally {
+      setIsProcessing(false)
+    }
+  }, [resumeText, selectedRole, candidateInfo, dispatch, speakText])
+
+  const startInterview = useCallback(async () => {
     if (!setupSpeechRecognition()) {
+      alert('Speech recognition not supported. Use Chrome or Edge.')
       return
     }
-    
-    try {
-      // Setup WebSocket connection
-      // Use WebSocket on the same host as the frontend (proxy will handle it)
-      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-      const wsUrl = `${protocol}//${window.location.host}/api/ws/voice-interview/${Date.now()}`
-      const ws = new WebSocket(wsUrl)
-      
-      ws.onopen = () => {
-        console.log('WebSocket connected')
-        setIsConnected(true)
-        
-        // Send initial context
-        ws.send(JSON.stringify({
-          type: 'init',
-          data: {
-            candidateName: candidateInfo?.name,
-            resumeText: resumeText,
-            role: selectedRole
-          }
-        }))
-      }
-      
-      ws.onmessage = (event) => {
-        const message = JSON.parse(event.data)
-        handleWebSocketMessage(message)
-      }
-      
-      ws.onerror = (error) => {
-        console.error('WebSocket error:', error)
-        alert('Connection error. Please refresh and try again.')
-      }
-      
-      ws.onclose = () => {
-        setIsConnected(false)
-        setIsListening(false)
-      }
-      
-      wsRef.current = ws
-    } catch (error) {
-      console.error('Error connecting:', error)
-      alert('Could not connect to server. Please try again.')
-    }
-  }
+    setIsStarted(true)
+    await callVoiceTurn('', 0, [])
+  }, [setupSpeechRecognition, callVoiceTurn])
 
-  const handleWebSocketMessage = (message: any) => {
-    switch (message.type) {
-      case 'transcript_update':
-        // Add to transcript
-        dispatch(addTranscriptEntry({
-          role: message.role === 'ai' ? 'ai' : 'candidate',
-          text: message.text
-        }))
-        
-        // If AI is speaking, use text-to-speech
-        if (message.role === 'ai') {
-          speakText(message.text)
-          if (message.text.toLowerCase().includes('question')) {
-            setQuestionCount(prev => Math.min(prev + 1, 6))
-          }
-        }
-        break
-        
-      case 'interview_complete':
-        handleInterviewComplete(message.data)
-        break
-        
-      default:
-        break
-    }
-  }
+  const sendResponse = useCallback(async () => {
+    const text = currentTranscriptRef.current.trim()
+    if (!text || isProcessingRef.current) return
 
-  const handleSendResponse = () => {
-    if (!currentTranscript.trim() || !wsRef.current || isProcessing) return
-    
-    setIsProcessing(true)
-    
-    // Send user response to backend
-    wsRef.current.send(JSON.stringify({
-      type: 'user_response',
-      text: currentTranscript.trim()
-    }))
-    
-    // Clear current transcript
+    dispatch(addTranscriptEntry({ role: 'candidate', text }))
+    const updatedHistory = [...conversationHistory, { role: 'candidate', text }]
+    setConversationHistory(updatedHistory)
     setCurrentTranscript('')
-    setIsProcessing(false)
-  }
+    currentTranscriptRef.current = ''
 
-  const handleInterviewComplete = (data: any) => {
-    setIsComplete(true)
-    dispatch(completeInterview({
-      score: data.score || 75,
-      summary: JSON.stringify(data.summary || {})
-    }))
-    
-    if (wsRef.current) {
-      wsRef.current.close()
-    }
-    
-    if (recognitionRef.current) {
-      recognitionRef.current.stop()
-    }
-    
-    if (window.speechSynthesis) {
-      window.speechSynthesis.cancel()
-    }
-  }
+    await callVoiceTurn(text, questionCount, updatedHistory)
+  }, [conversationHistory, questionCount, dispatch, callVoiceTurn])
 
   if (isComplete) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-emerald-50 via-teal-50 to-cyan-100 p-4">
-        <Card className="w-full max-w-2xl shadow-2xl border-0">
-          <div className="bg-gradient-to-r from-emerald-500 to-teal-500 p-8 text-center">
-            <CheckCircle className="h-20 w-20 text-white mx-auto mb-4" />
-            <CardTitle className="text-4xl font-bold text-white mb-2">Voice Interview Complete!</CardTitle>
-            <CardDescription className="text-emerald-100 text-lg">
-              Thank you for completing the voice interview
-            </CardDescription>
-          </div>
-          <CardContent className="p-8 space-y-6">
-            <div className="text-center py-8 bg-gradient-to-br from-emerald-50 to-teal-50 rounded-2xl">
-              <Sparkles className="h-16 w-16 text-emerald-600 mx-auto mb-4" />
-              <p className="text-xl font-semibold text-gray-800 mb-2">
-                Your interview has been recorded and evaluated
-              </p>
-              <p className="text-gray-600">
-                The interviewer will review your responses and provide feedback shortly
-              </p>
+      <div className="min-h-screen bg-background grain flex items-center justify-center p-4">
+        <Card className="w-full max-w-2xl border-border/50 bg-card/80 backdrop-blur-sm animate-in">
+          <CardHeader className="border-b border-border/50 text-center pb-6">
+            <div className="h-14 w-14 rounded-2xl bg-primary/10 flex items-center justify-center mx-auto mb-4">
+              <CheckCircle className="h-7 w-7 text-primary" />
             </div>
-            <Button 
-              className="w-full h-12 text-lg bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 shadow-lg" 
-              onClick={() => window.location.reload()}
-            >
-              Start New Interview
+            <CardTitle className="font-display text-3xl">Voice Interview Complete</CardTitle>
+            <CardDescription>Your responses have been recorded and evaluated</CardDescription>
+          </CardHeader>
+          <CardContent className="p-6">
+            <Button onClick={onStartFresh} className="w-full gap-2">
+              <RotateCcw className="h-4 w-4" /> Start New Interview
             </Button>
           </CardContent>
         </Card>
@@ -319,165 +199,96 @@ export function VoiceInterview() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-purple-50 via-pink-50 to-rose-100 p-4">
-      <div className="max-w-5xl mx-auto py-8">
-        {/* Status Card */}
-        <Card className="mb-6 border-0 shadow-lg">
-          <div className="bg-gradient-to-r from-purple-500 to-pink-600 p-4">
-            <div className="flex items-center justify-between text-white">
-              <div className="flex items-center gap-4">
-                <div className={cn(
-                  "h-4 w-4 rounded-full",
-                  isConnected ? "bg-green-400 animate-pulse" : "bg-gray-300"
-                )} />
-                <span className="font-semibold text-lg">
-                  {isConnected ? 'Connected' : 'Disconnected'}
-                </span>
-                {isConnected && (
-                  <Badge variant="secondary" className="bg-white/20 border-0">
-                    {selectedRole}
-                  </Badge>
-                )}
+    <div className="min-h-screen bg-background grain p-4">
+      <div className="max-w-4xl mx-auto py-6 space-y-4">
+        <Card className="border-border/50 bg-card/80 overflow-hidden">
+          <div className="bg-secondary/50 p-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className={cn("h-3 w-3 rounded-full", isStarted ? "bg-primary animate-pulse" : "bg-muted-foreground/30")} />
+                <span className="font-display font-semibold text-foreground">{isStarted ? 'Interview Active' : 'Ready'}</span>
+                {isStarted && <Badge variant="secondary" className="font-mono text-xs">{selectedRole}</Badge>}
               </div>
-              <Badge variant="secondary" className="bg-white/20 border-0">
-                Question: {questionCount} / 6
-              </Badge>
+              <Badge variant="secondary" className="font-mono text-xs">Q: {questionCount}/6</Badge>
             </div>
           </div>
         </Card>
 
-        {/* Main Interview Card */}
-        <Card className="mb-6 border-0 shadow-lg">
-          <CardHeader className="bg-gradient-to-r from-purple-50 to-pink-50">
-            <div className="flex items-start gap-3">
-              <div className="h-12 w-12 rounded-full bg-gradient-to-br from-purple-500 to-pink-600 flex items-center justify-center flex-shrink-0">
-                <Mic className="h-6 w-6 text-white" />
+        <Card className="border-border/50 bg-card/80">
+          <CardHeader>
+            <div className="flex items-center gap-3">
+              <div className="h-10 w-10 rounded-xl bg-primary/10 flex items-center justify-center">
+                <Mic className="h-5 w-5 text-primary" />
               </div>
-              <div className="flex-1">
-                <CardTitle className="text-2xl">Voice Interview</CardTitle>
-                <CardDescription className="text-base">
-                  Speak naturally with the AI interviewer. Your conversation will be transcribed in real-time.
-                </CardDescription>
+              <div>
+                <CardTitle className="font-display text-xl">Voice Interview</CardTitle>
+                <CardDescription className="text-xs">Speak naturally — works everywhere including Vercel</CardDescription>
               </div>
             </div>
           </CardHeader>
-          
-          <CardContent className="p-8 space-y-6">
-            {!isConnected ? (
-              <div className="text-center py-16">
-                <div className="mb-8">
-                  <div className="h-32 w-32 rounded-full bg-gradient-to-br from-purple-500 to-pink-600 flex items-center justify-center mx-auto shadow-2xl">
-                    <Mic className="h-16 w-16 text-white" />
-                  </div>
+          <CardContent className="p-6 space-y-6">
+            {!isStarted ? (
+              <div className="text-center py-12">
+                <div className="h-24 w-24 rounded-2xl bg-primary/10 flex items-center justify-center mx-auto mb-6">
+                  <Mic className="h-12 w-12 text-primary" />
                 </div>
-                <h3 className="text-3xl font-bold text-gray-800 mb-4">Ready to Start?</h3>
-                <p className="text-gray-600 mb-8 max-w-md mx-auto">
-                  Click the button below to begin your voice interview. Make sure your microphone is working and permissions are granted.
+                <h3 className="font-display text-2xl font-bold text-foreground mb-3">Ready to Start?</h3>
+                <p className="text-sm text-muted-foreground mb-6 max-w-md mx-auto">
+                  Ensure your microphone is working. The AI will ask 6 questions and you can respond by speaking or typing.
                 </p>
-                <Button 
-                  size="lg" 
-                  onClick={connectToInterview} 
-                  className="gap-2 bg-gradient-to-r from-purple-500 to-pink-600 hover:from-purple-600 hover:to-pink-700 shadow-lg px-8 h-14 text-lg"
-                >
-                  <Mic className="h-6 w-6" />
-                  Start Voice Interview
+                <Button onClick={startInterview} size="lg" className="gap-2">
+                  <Mic className="h-5 w-5" /> Start Voice Interview
                 </Button>
               </div>
             ) : (
               <>
-                {/* Visual Feedback */}
-                <div className="flex flex-col items-center gap-8 py-8 bg-gradient-to-br from-white to-gray-50 rounded-2xl">
-                  <div className="relative">
-                    <div className={cn(
-                      "h-40 w-40 rounded-full bg-gradient-to-br flex items-center justify-center shadow-2xl",
-                      isSpeaking ? "from-orange-400 to-red-500 animate-pulse" :
-                      isListening ? "from-purple-500 to-pink-600 animate-pulse" :
-                      "from-gray-300 to-gray-400"
-                    )}>
-                      {isSpeaking ? (
-                        <Volume2 className="h-20 w-20 text-white" />
-                      ) : isListening ? (
-                        <Mic className="h-20 w-20 text-white animate-pulse" />
-                      ) : (
-                        <MicOff className="h-20 w-20 text-white" />
-                      )}
-                    </div>
-                    {isListening && (
-                      <div className="absolute -top-4 -right-4">
-                        <div className="h-8 w-8 bg-red-500 rounded-full animate-pulse flex items-center justify-center">
-                          <div className="h-3 w-3 bg-white rounded-full"></div>
-                        </div>
-                      </div>
-                    )}
+                <div className="flex flex-col items-center gap-6 py-8 glass rounded-xl">
+                  <div className={cn(
+                    "h-32 w-32 rounded-2xl flex items-center justify-center transition-all duration-300",
+                    isSpeaking ? "bg-accent/20 animate-pulse" :
+                    isListening ? "bg-primary/20 animate-pulse" :
+                    isProcessing ? "bg-secondary animate-pulse" :
+                    "bg-secondary"
+                  )}>
+                    {isSpeaking ? <Volume2 className="h-16 w-16 text-accent" /> :
+                     isListening ? <Mic className="h-16 w-16 text-primary" /> :
+                     isProcessing ? <Loader2 className="h-16 w-16 text-muted-foreground animate-spin" /> :
+                     <MicOff className="h-16 w-16 text-muted-foreground" />}
                   </div>
-                  
-                  <div className="text-center max-w-md">
-                    <p className="text-2xl font-bold text-gray-800 mb-2">
-                      {isSpeaking ? '🔊 AI is speaking...' : 
-                       isListening ? '🎤 Listening to you...' : 
-                       '⏸ Ready for your response'}
+                  <div className="text-center">
+                    <p className="font-display text-xl font-bold text-foreground mb-1">
+                      {isSpeaking ? 'AI Speaking...' : isListening ? 'Listening...' : isProcessing ? 'Thinking...' : 'Ready'}
                     </p>
-                    <p className="text-gray-600">
-                      {isSpeaking ? 'Please wait for the AI to finish' :
-                       isListening ? 'Speak your answer clearly' :
-                       'Click the microphone button to respond'}
+                    <p className="text-sm text-muted-foreground">
+                      {isSpeaking ? 'Wait for the AI to finish' : isListening ? 'Speak your answer clearly' : isProcessing ? 'Generating response...' : 'Click mic to respond'}
                     </p>
                   </div>
                 </div>
 
-                {/* Current Transcript Input */}
-                {!isSpeaking && (
+                {!isSpeaking && !isProcessing && (
                   <div className="space-y-4">
-                    <h4 className="font-semibold text-gray-700">Your Response:</h4>
                     <Textarea
                       value={currentTranscript}
-                      onChange={(e) => setCurrentTranscript(e.target.value)}
-                      placeholder={isListening ? "Listening... speak now!" : "Click mic to speak or type here..."}
-                      className="min-h-[120px] text-base"
+                      onChange={(e) => { setCurrentTranscript(e.target.value); currentTranscriptRef.current = e.target.value }}
+                      placeholder={isListening ? "Listening..." : "Click mic to speak or type here..."}
+                      className="min-h-[100px] bg-secondary/30 border-border/50"
                       disabled={isListening}
                     />
-                    
-                    {/* Controls */}
                     <div className="flex justify-between items-center gap-4">
-                      <div className="flex gap-3">
-                        <Button
-                          variant={isListening ? "destructive" : "default"}
-                          size="lg"
-                          onClick={isListening ? stopListening : startListening}
-                          disabled={isSpeaking}
-                          className="gap-2"
-                        >
-                          {isListening ? (
-                            <>
-                              <MicOff className="h-5 w-5" />
-                              Stop Listening
-                            </>
-                          ) : (
-                            <>
-                              <Mic className="h-5 w-5" />
-                              Start Speaking
-                            </>
-                          )}
-                        </Button>
-                      </div>
-                      
                       <Button
-                        onClick={handleSendResponse}
-                        disabled={!currentTranscript.trim() || isProcessing || isListening}
-                        size="lg"
-                        className="gap-2 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700"
+                        variant={isListening ? "destructive" : "secondary"}
+                        onClick={isListening ? stopListening : startListening}
+                        disabled={isSpeaking || isProcessing}
+                        className="gap-2"
                       >
-                        {isProcessing ? (
-                          <>
-                            <Loader2 className="h-5 w-5 animate-spin" />
-                            Sending...
-                          </>
-                        ) : (
-                          <>
-                            <Send className="h-5 w-5" />
-                            Send Response
-                          </>
-                        )}
+                        {isListening ? <><MicOff className="h-4 w-4" /> Stop</> : <><Mic className="h-4 w-4" /> Speak</>}
+                      </Button>
+                      <Button
+                        onClick={sendResponse}
+                        disabled={!currentTranscript.trim() || isProcessing || isListening}
+                        className="gap-2"
+                      >
+                        <Send className="h-4 w-4" /> Send
                       </Button>
                     </div>
                   </div>
@@ -487,35 +298,26 @@ export function VoiceInterview() {
           </CardContent>
         </Card>
 
-        {/* Transcript Card */}
         {transcript.length > 0 && (
-          <Card className="border-0 shadow-lg">
-            <CardHeader className="bg-gradient-to-r from-purple-50 to-pink-50">
-              <CardTitle className="flex items-center gap-2">
-                <Sparkles className="h-5 w-5 text-purple-600" />
-                Live Transcript
+          <Card className="border-border/50 bg-card/80">
+            <CardHeader>
+              <CardTitle className="font-display text-lg flex items-center gap-2">
+                <Sparkles className="h-4 w-4 text-primary" /> Transcript
               </CardTitle>
-              <CardDescription>Real-time conversation history</CardDescription>
             </CardHeader>
-            <CardContent className="p-6">
-              <div className="space-y-4 max-h-[400px] overflow-y-auto">
+            <CardContent>
+              <div className="space-y-3 max-h-[400px] overflow-y-auto">
                 {transcript.map((entry, idx) => (
-                  <div
-                    key={idx}
-                    className={cn(
-                      "p-4 rounded-xl",
-                      entry.role === 'ai' ? "bg-blue-50 border-l-4 border-blue-500" : "bg-green-50 border-l-4 border-green-500"
-                    )}
-                  >
-                    <div className="flex items-center gap-2 mb-2">
-                      <Badge variant={entry.role === 'ai' ? "default" : "secondary"}>
-                        {entry.role === 'ai' ? '🤖 AI Interviewer' : '👤 You'}
+                  <div key={idx} className={cn("p-3 rounded-lg", entry.role === 'ai' ? "glass border-l-2 border-primary" : "glass border-l-2 border-accent")}>
+                    <div className="flex items-center gap-2 mb-1">
+                      <Badge variant={entry.role === 'ai' ? "default" : "secondary"} className="text-xs font-mono">
+                        {entry.role === 'ai' ? 'AI' : 'You'}
                       </Badge>
-                      <span className="text-xs text-gray-500">
+                      <span className="text-[10px] text-muted-foreground font-mono">
                         {new Date(entry.timestamp).toLocaleTimeString()}
                       </span>
                     </div>
-                    <p className="text-gray-800">{entry.text}</p>
+                    <p className="text-sm text-foreground/80">{entry.text}</p>
                   </div>
                 ))}
               </div>

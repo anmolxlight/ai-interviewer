@@ -8,7 +8,7 @@ CREATE TABLE IF NOT EXISTS interviews (
     candidate_email VARCHAR(255) NOT NULL,
     candidate_phone VARCHAR(50),
     resume_text TEXT,
-    mode VARCHAR(10) NOT NULL CHECK (mode IN ('chat', 'voice')),
+    mode VARCHAR(10) NOT NULL CHECK (mode IN ('chat', 'voice', 'live')),
     transcript JSONB,
     score INTEGER CHECK (score >= 0 AND score <= 100),
     summary JSONB,

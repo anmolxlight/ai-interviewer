@@ -3,7 +3,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/
 import { Button } from './ui/button'
 import { Input } from './ui/input'
 import { Badge } from './ui/badge'
-import { Search, User, Calendar, MessageSquare, Mic, ChevronRight, ArrowUpDown } from 'lucide-react'
+import { Search, User, Calendar, MessageSquare, Mic, ChevronRight, ArrowUpDown, ArrowLeft, TrendingUp, Award, Video } from 'lucide-react'
 import { formatDate } from '@/lib/utils'
 import axios from 'axios'
 
@@ -12,14 +12,30 @@ interface Interview {
   candidate_name: string
   candidate_email: string
   candidate_phone: string
-  mode: 'chat' | 'voice'
+  mode: 'chat' | 'voice' | 'live'
   score: number
   created_at: string
   summary: string
   transcript: string
 }
 
-export function Dashboard() {
+interface DashboardProps {
+  onBack: () => void
+}
+
+function getScoreColor(score: number) {
+  if (score >= 80) return 'text-primary bg-primary/10'
+  if (score >= 60) return 'text-accent bg-accent/10'
+  return 'text-destructive bg-destructive/10'
+}
+
+function getModeIcon(mode: string) {
+  if (mode === 'voice') return <Mic className="h-3 w-3" />
+  if (mode === 'live') return <Video className="h-3 w-3" />
+  return <MessageSquare className="h-3 w-3" />
+}
+
+export function Dashboard({ onBack }: DashboardProps) {
   const [interviews, setInterviews] = useState<Interview[]>([])
   const [filteredInterviews, setFilteredInterviews] = useState<Interview[]>([])
   const [searchQuery, setSearchQuery] = useState('')
@@ -27,50 +43,28 @@ export function Dashboard() {
   const [selectedInterview, setSelectedInterview] = useState<Interview | null>(null)
   const [isLoading, setIsLoading] = useState(true)
 
-  useEffect(() => {
-    fetchInterviews()
-  }, [])
+  useEffect(() => { fetchInterviews() }, [])
 
   useEffect(() => {
-    filterAndSortInterviews()
+    let filtered = interviews.filter(i =>
+      i.candidate_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      i.candidate_email?.toLowerCase().includes(searchQuery.toLowerCase())
+    )
+    filtered.sort((a, b) =>
+      sortBy === 'score' ? b.score - a.score : new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+    )
+    setFilteredInterviews(filtered)
   }, [interviews, searchQuery, sortBy])
 
   const fetchInterviews = async () => {
     try {
-      const response = await axios.get(
-        '/api/interviews'
-      )
-      if (response.data.success) {
-        setInterviews(response.data.interviews)
-      }
-    } catch (error) {
-      console.error('Error fetching interviews:', error)
+      const response = await axios.get('/api/interviews')
+      if (response.data.success) setInterviews(response.data.interviews)
+    } catch {
+      // Supabase may not be configured
     } finally {
       setIsLoading(false)
     }
-  }
-
-  const filterAndSortInterviews = () => {
-    let filtered = interviews.filter(interview =>
-      interview.candidate_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      interview.candidate_email.toLowerCase().includes(searchQuery.toLowerCase())
-    )
-
-    filtered.sort((a, b) => {
-      if (sortBy === 'score') {
-        return b.score - a.score
-      } else {
-        return new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-      }
-    })
-
-    setFilteredInterviews(filtered)
-  }
-
-  const getScoreColor = (score: number) => {
-    if (score >= 80) return 'text-green-600 bg-green-50'
-    if (score >= 60) return 'text-yellow-600 bg-yellow-50'
-    return 'text-red-600 bg-red-50'
   }
 
   if (selectedInterview) {
@@ -78,34 +72,30 @@ export function Dashboard() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 p-4">
-      <div className="max-w-7xl mx-auto py-8">
-        {/* Header */}
-        <div className="mb-8">
-          <h1 className="text-4xl font-bold mb-2">Interviewer Dashboard</h1>
-          <p className="text-muted-foreground">
-            Review and manage candidate interviews
-          </p>
+    <div className="min-h-screen bg-background grain p-4">
+      <div className="max-w-6xl mx-auto py-6 space-y-4">
+        <button onClick={onBack} className="flex items-center gap-2 text-muted-foreground hover:text-foreground transition-colors text-sm">
+          <ArrowLeft className="h-4 w-4" /> Back
+        </button>
+
+        <div className="mb-6">
+          <h1 className="font-display text-4xl font-bold text-foreground mb-1">Interviewer Dashboard</h1>
+          <p className="text-muted-foreground text-sm">Review and manage candidate interviews</p>
         </div>
 
-        {/* Controls */}
-        <Card className="mb-6">
-          <CardContent className="pt-6">
-            <div className="flex flex-col md:flex-row gap-4">
+        <Card className="border-border/50 bg-card/80">
+          <CardContent className="pt-5 pb-4">
+            <div className="flex flex-col md:flex-row gap-3">
               <div className="flex-1 relative">
                 <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <Input
                   placeholder="Search by name or email..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  className="pl-10"
+                  className="pl-10 bg-secondary/50 border-border/50"
                 />
               </div>
-              <Button
-                variant="outline"
-                onClick={() => setSortBy(sortBy === 'score' ? 'date' : 'score')}
-                className="gap-2"
-              >
+              <Button variant="outline" onClick={() => setSortBy(sortBy === 'score' ? 'date' : 'score')} className="gap-2 border-border/50">
                 <ArrowUpDown className="h-4 w-4" />
                 Sort by {sortBy === 'score' ? 'Score' : 'Date'}
               </Button>
@@ -113,104 +103,64 @@ export function Dashboard() {
           </CardContent>
         </Card>
 
-        {/* Stats */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-          <Card>
-            <CardHeader className="pb-3">
-              <CardTitle className="text-sm font-medium text-muted-foreground">
-                Total Interviews
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-3xl font-bold">{interviews.length}</div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader className="pb-3">
-              <CardTitle className="text-sm font-medium text-muted-foreground">
-                Average Score
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-3xl font-bold">
-                {interviews.length > 0
-                  ? Math.round(interviews.reduce((sum, i) => sum + i.score, 0) / interviews.length)
-                  : 0}
-              </div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader className="pb-3">
-              <CardTitle className="text-sm font-medium text-muted-foreground">
-                High Performers (≥80)
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-3xl font-bold">
-                {interviews.filter(i => i.score >= 80).length}
-              </div>
-            </CardContent>
-          </Card>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          {[
+            { label: 'Total Interviews', value: interviews.length, icon: MessageSquare },
+            { label: 'Average Score', value: interviews.length > 0 ? Math.round(interviews.reduce((s, i) => s + i.score, 0) / interviews.length) : 0, icon: TrendingUp },
+            { label: 'High Performers', value: interviews.filter(i => i.score >= 80).length, icon: Award },
+          ].map(({ label, value, icon: Icon }) => (
+            <Card key={label} className="border-border/50 bg-card/80">
+              <CardContent className="pt-5 pb-4">
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-xs font-mono text-muted-foreground uppercase tracking-wider">{label}</p>
+                  <Icon className="h-4 w-4 text-muted-foreground" />
+                </div>
+                <p className="text-3xl font-display font-bold text-foreground">{value}</p>
+              </CardContent>
+            </Card>
+          ))}
         </div>
 
-        {/* Interviews List */}
-        <Card>
+        <Card className="border-border/50 bg-card/80">
           <CardHeader>
-            <CardTitle>Candidate Interviews</CardTitle>
-            <CardDescription>
-              Click on any interview to view details
-            </CardDescription>
+            <CardTitle className="font-display text-xl">Candidate Interviews</CardTitle>
+            <CardDescription className="text-xs">Click any interview to view details</CardDescription>
           </CardHeader>
           <CardContent>
             {isLoading ? (
-              <div className="text-center py-12 text-muted-foreground">
-                Loading interviews...
-              </div>
+              <p className="text-center py-12 text-muted-foreground text-sm">Loading interviews...</p>
             ) : filteredInterviews.length === 0 ? (
-              <div className="text-center py-12 text-muted-foreground">
-                {searchQuery ? 'No interviews found matching your search' : 'No interviews yet'}
-              </div>
+              <p className="text-center py-12 text-muted-foreground text-sm">{searchQuery ? 'No results' : 'No interviews yet'}</p>
             ) : (
-              <div className="space-y-3">
+              <div className="space-y-2">
                 {filteredInterviews.map((interview) => (
-                  <div
+                  <button
                     key={interview.id}
                     onClick={() => setSelectedInterview(interview)}
-                    className="flex items-center gap-4 p-4 border rounded-lg hover:bg-accent cursor-pointer transition-colors"
+                    className="w-full flex items-center gap-4 p-4 glass rounded-lg hover:bg-secondary/30 transition-colors text-left"
                   >
-                    <div className="flex-shrink-0">
-                      <div className="h-12 w-12 rounded-full bg-primary/10 flex items-center justify-center">
-                        <User className="h-6 w-6 text-primary" />
-                      </div>
+                    <div className="h-10 w-10 rounded-xl bg-primary/10 flex items-center justify-center flex-shrink-0">
+                      <User className="h-5 w-5 text-primary" />
                     </div>
-                    
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 mb-1">
-                        <h3 className="font-semibold truncate">{interview.candidate_name}</h3>
-                        <Badge variant="outline" className="gap-1">
-                          {interview.mode === 'chat' ? (
-                            <><MessageSquare className="h-3 w-3" /> Chat</>
-                          ) : (
-                            <><Mic className="h-3 w-3" /> Voice</>
-                          )}
+                        <h3 className="font-semibold text-foreground text-sm truncate">{interview.candidate_name}</h3>
+                        <Badge variant="outline" className="gap-1 text-[10px] font-mono border-border/50">
+                          {getModeIcon(interview.mode)} {interview.mode}
                         </Badge>
                       </div>
-                      <div className="flex items-center gap-4 text-sm text-muted-foreground">
+                      <div className="flex items-center gap-3 text-xs text-muted-foreground">
                         <span>{interview.candidate_email}</span>
-                        <span className="flex items-center gap-1">
-                          <Calendar className="h-3 w-3" />
-                          {formatDate(interview.created_at)}
-                        </span>
+                        <span className="flex items-center gap-1"><Calendar className="h-3 w-3" />{formatDate(interview.created_at)}</span>
                       </div>
                     </div>
-
-                    <div className="flex items-center gap-4">
-                      <div className={`px-4 py-2 rounded-lg font-semibold ${getScoreColor(interview.score)}`}>
+                    <div className="flex items-center gap-3">
+                      <div className={`px-3 py-1.5 rounded-lg font-mono font-bold text-sm ${getScoreColor(interview.score)}`}>
                         {interview.score}
                       </div>
-                      <ChevronRight className="h-5 w-5 text-muted-foreground" />
+                      <ChevronRight className="h-4 w-4 text-muted-foreground" />
                     </div>
-                  </div>
+                  </button>
                 ))}
               </div>
             )}
@@ -227,124 +177,109 @@ interface InterviewDetailProps {
 }
 
 function InterviewDetail({ interview, onBack }: InterviewDetailProps) {
-  const summary = interview.summary ? JSON.parse(interview.summary) : null
-  const transcript = interview.transcript ? JSON.parse(interview.transcript) : []
+  let summary: any = null
+  let transcriptData: any[] = []
+  try { summary = interview.summary ? JSON.parse(interview.summary) : null } catch { summary = null }
+  try { transcriptData = interview.transcript ? JSON.parse(interview.transcript) : [] } catch { transcriptData = [] }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 p-4">
-      <div className="max-w-5xl mx-auto py-8">
-        <Button variant="outline" onClick={onBack} className="mb-6">
-          ← Back to Dashboard
-        </Button>
+    <div className="min-h-screen bg-background grain p-4">
+      <div className="max-w-4xl mx-auto py-6 space-y-4">
+        <button onClick={onBack} className="flex items-center gap-2 text-muted-foreground hover:text-foreground transition-colors text-sm">
+          <ArrowLeft className="h-4 w-4" /> Back to Dashboard
+        </button>
 
-        {/* Candidate Info */}
-        <Card className="mb-6">
+        <Card className="border-border/50 bg-card/80">
           <CardHeader>
             <div className="flex items-start justify-between">
               <div>
-                <CardTitle className="text-2xl mb-2">{interview.candidate_name}</CardTitle>
-                <div className="space-y-1 text-sm text-muted-foreground">
-                  <p>Email: {interview.candidate_email}</p>
-                  <p>Phone: {interview.candidate_phone}</p>
-                  <p>Date: {formatDate(interview.created_at)}</p>
+                <CardTitle className="font-display text-2xl mb-2">{interview.candidate_name}</CardTitle>
+                <div className="space-y-1 text-xs text-muted-foreground font-mono">
+                  <p>{interview.candidate_email}</p>
+                  <p>{interview.candidate_phone}</p>
+                  <p>{formatDate(interview.created_at)}</p>
                 </div>
               </div>
               <div className="text-center">
-                <div className={`text-5xl font-bold mb-2 ${getScoreColor(interview.score).split(' ')[0]}`}>
+                <div className={`text-4xl font-display font-bold mb-1 ${getScoreColor(interview.score).split(' ')[0]}`}>
                   {interview.score}
                 </div>
-                <Badge variant={interview.mode === 'chat' ? 'default' : 'secondary'}>
-                  {interview.mode === 'chat' ? 'Chat Interview' : 'Voice Interview'}
+                <Badge variant="secondary" className="font-mono text-xs">
+                  {getModeIcon(interview.mode)} {interview.mode}
                 </Badge>
               </div>
             </div>
           </CardHeader>
         </Card>
 
-        {/* Summary */}
         {summary && (
-          <Card className="mb-6">
+          <Card className="border-border/50 bg-card/80">
             <CardHeader>
-              <CardTitle>Interview Summary</CardTitle>
+              <CardTitle className="font-display text-xl">Summary</CardTitle>
             </CardHeader>
-            <CardContent className="space-y-6">
-              <div>
-                <h3 className="font-semibold text-lg mb-3 text-green-600">✓ Strengths</h3>
-                <ul className="space-y-2">
-                  {summary.strengths?.map((strength: string, idx: number) => (
-                    <li key={idx} className="flex items-start gap-2">
-                      <span className="text-green-500 mt-1">•</span>
-                      <span>{strength}</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-
-              <div>
-                <h3 className="font-semibold text-lg mb-3 text-orange-600">⚠ Areas for Improvement</h3>
-                <ul className="space-y-2">
-                  {summary.improvements?.map((improvement: string, idx: number) => (
-                    <li key={idx} className="flex items-start gap-2">
-                      <span className="text-orange-500 mt-1">•</span>
-                      <span>{improvement}</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-
-              <div className="pt-4 border-t">
-                <div className="flex items-center justify-between">
-                  <span className="font-semibold text-lg">Recommendation:</span>
-                  <Badge variant={summary.recommendation === 'Highly Recommended' ? 'default' : 'secondary'} className="text-base px-4 py-1">
-                    {summary.recommendation}
-                  </Badge>
+            <CardContent className="space-y-5">
+              {summary.strengths && (
+                <div className="glass rounded-lg p-4">
+                  <h3 className="font-display font-semibold text-primary mb-2 text-sm">Strengths</h3>
+                  <ul className="space-y-1">
+                    {summary.strengths.map((s: string, i: number) => (
+                      <li key={i} className="text-sm text-foreground/80 flex items-start gap-2">
+                        <span className="text-primary mt-0.5">+</span> {s}
+                      </li>
+                    ))}
+                  </ul>
                 </div>
-              </div>
+              )}
+              {summary.improvements && (
+                <div className="glass rounded-lg p-4">
+                  <h3 className="font-display font-semibold text-accent mb-2 text-sm">Improvements</h3>
+                  <ul className="space-y-1">
+                    {summary.improvements.map((s: string, i: number) => (
+                      <li key={i} className="text-sm text-foreground/80 flex items-start gap-2">
+                        <span className="text-accent mt-0.5">→</span> {s}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {summary.recommendation && (
+                <div className="flex items-center justify-between pt-3 border-t border-border/50">
+                  <span className="text-sm text-muted-foreground">Recommendation</span>
+                  <Badge variant="secondary" className="font-mono">{summary.recommendation}</Badge>
+                </div>
+              )}
             </CardContent>
           </Card>
         )}
 
-        {/* Transcript */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Interview Transcript</CardTitle>
-            <CardDescription>
-              Complete record of questions and answers
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-4">
-              {Array.isArray(transcript) && transcript.map((item: any, idx: number) => (
-                <div key={idx} className="space-y-2">
-                  <div className="bg-blue-50 p-4 rounded-lg">
-                    <div className="flex items-center gap-2 mb-2">
-                      <Badge variant="default">Question {idx + 1}</Badge>
-                      {item.difficulty && (
-                        <Badge variant="outline">{item.difficulty}</Badge>
-                      )}
-                      {item.score !== undefined && (
-                        <Badge variant="secondary">Score: {item.score}</Badge>
-                      )}
+        {Array.isArray(transcriptData) && transcriptData.length > 0 && (
+          <Card className="border-border/50 bg-card/80">
+            <CardHeader>
+              <CardTitle className="font-display text-xl">Transcript</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-3">
+                {transcriptData.map((item: any, idx: number) => (
+                  <div key={idx} className="space-y-2">
+                    <div className="glass rounded-lg p-4 border-l-2 border-primary">
+                      <div className="flex items-center gap-2 mb-2">
+                        <Badge variant="default" className="text-xs font-mono">Q{idx + 1}</Badge>
+                        {item.difficulty && <Badge variant="secondary" className="text-xs font-mono">{item.difficulty}</Badge>}
+                        {item.score !== undefined && <Badge variant="secondary" className="text-xs font-mono">Score: {item.score}</Badge>}
+                      </div>
+                      <p className="text-sm text-foreground">{item.question}</p>
                     </div>
-                    <p className="font-medium">{item.question}</p>
+                    <div className="glass rounded-lg p-4 border-l-2 border-accent">
+                      <Badge variant="secondary" className="text-xs font-mono mb-2">Answer</Badge>
+                      <p className="text-sm text-foreground/80">{item.answer}</p>
+                    </div>
                   </div>
-                  <div className="bg-green-50 p-4 rounded-lg">
-                    <Badge variant="secondary" className="mb-2">Answer</Badge>
-                    <p>{item.answer}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        )}
       </div>
     </div>
   )
 }
-
-function getScoreColor(score: number) {
-  if (score >= 80) return 'text-green-600 bg-green-50'
-  if (score >= 60) return 'text-yellow-600 bg-yellow-50'
-  return 'text-red-600 bg-red-50'
-}
-

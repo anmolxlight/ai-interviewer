@@ -18,9 +18,10 @@ load_dotenv()
 app = FastAPI(title="AI Interview Assistant API")
 
 # CORS configuration
+ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000,http://localhost:5173").split(",")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:5173"],
+    allow_origins=ALLOWED_ORIGINS + ["https://*.vercel.app"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -388,6 +389,72 @@ async def generate_summary(interview_data: Dict[str, Any]):
             "success": False,
             "error": str(e)
         }
+
+
+class VoiceTurnRequest(BaseModel):
+    resume_text: str
+    role: str
+    user_response: str
+    question_number: int
+    conversation_history: List[Dict[str, str]] = []
+
+
+@app.post("/api/voice-turn")
+async def voice_turn(request: VoiceTurnRequest):
+    """Handle one turn of a voice interview conversation (HTTP replacement for WebSocket)"""
+    try:
+        if not GEMINI_API_KEY:
+            raise HTTPException(status_code=500, detail="Gemini API key not configured")
+
+        model = genai.GenerativeModel('gemini-2.5-flash')
+
+        history_text = ""
+        for entry in request.conversation_history[-6:]:
+            role_label = "AI" if entry.get("role") == "ai" else "Candidate"
+            history_text += f"{role_label}: {entry.get('text', '')}\n"
+
+        if request.question_number == 0:
+            prompt = f"""You are conducting a voice interview for a {request.role} position.
+
+Resume: {request.resume_text[:1500]}
+
+Generate a friendly opening question. Be conversational. Ask about their background or a key skill from their resume.
+Return ONLY the question text."""
+        elif request.question_number >= 6:
+            prompt = f"""You are an AI interviewer for a {request.role} position.
+The interview is now complete after 6 questions.
+
+Conversation so far:
+{history_text}
+
+Thank the candidate warmly, give brief overall feedback, and say goodbye.
+Return ONLY your closing response text."""
+        else:
+            difficulty = "easier" if request.question_number <= 2 else "medium" if request.question_number <= 4 else "harder"
+            prompt = f"""You are an AI interviewer for a {request.role} position.
+
+Candidate's latest answer: {request.user_response}
+Resume: {request.resume_text[:1000]}
+
+Previous conversation:
+{history_text}
+
+Question {request.question_number + 1} of 6. Ask a {difficulty} question.
+Acknowledge their previous answer briefly, then ask the new question.
+Return ONLY your response text."""
+
+        response = model.generate_content(prompt)
+        ai_text = response.text.strip()
+
+        return {
+            "success": True,
+            "ai_response": ai_text,
+            "question_number": request.question_number + 1,
+            "is_complete": request.question_number >= 6
+        }
+    except Exception as e:
+        print(f"Error in voice turn: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.websocket("/api/ws/voice-interview/{session_id}")

@@ -10,7 +10,7 @@
     "backend": "cd backend && uvicorn main:app --reload --host 0.0.0.0 --port 8000"
   },
   "dependencies": {
-    "@google/genai": "^0.4.0",
+    "@google/genai": "^1.44.0",
     "@reduxjs/toolkit": "^2.0.1",
     "@supabase/supabase-js": "^2.39.0",
     "axios": "^1.6.3",
@@ -44,4 +44,3 @@
     "vite": "^5.0.10"
   }
 }
-

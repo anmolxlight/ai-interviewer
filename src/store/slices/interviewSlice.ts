@@ -103,7 +103,7 @@ const interviewSlice = createSlice({
     setTimeRemaining: (state, action: PayloadAction<number>) => {
       state.timeRemaining = action.payload
     },
-    resetInterview: (state) => {
+    resetInterview: () => {
       return initialState
     },
   },
