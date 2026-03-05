@@ -17,7 +17,10 @@
 - **Vercel**: Frontend as Vite static build + backend as Python serverless function at `/api/*`
 - Production URL: `workspace-lovat-alpha.vercel.app`
 - Config: `vercel.json`, serverless entry: `api/index.py`
-- WebSocket-based features (voice/live interview) do not work on Vercel serverless — only chat interview and dashboard work in production
+- All 3 interview modes work on Vercel:
+  - **Chat**: HTTP REST endpoints (always worked)
+  - **Voice**: Rewritten to use HTTP POST `/api/voice-turn` instead of WebSocket
+  - **Live**: Connects directly from browser to Gemini Live API via `@google/genai` SDK (WebSocket is browser→Google, not browser→Vercel)
 - Deploy: `vercel deploy --prod --token $VERCEL_TOKEN --scope anmolxlights-projects`
 - When piping env vars to `vercel env add`, use `printf '%s'` not `echo` to avoid trailing newlines
 
