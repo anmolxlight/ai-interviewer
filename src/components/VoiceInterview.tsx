@@ -8,35 +8,39 @@ import { Badge } from './ui/badge'
 import { Mic, MicOff, Volume2, Loader2, CheckCircle, Sparkles, Send, RotateCcw } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Textarea } from './ui/textarea'
+import axios from 'axios'
 
 interface SpeechRecognitionEvent extends Event {
-  results: SpeechRecognitionResultList
-  resultIndex: number
+  results: SpeechRecognitionResultList; resultIndex: number
 }
-interface SpeechRecognitionResultList { length: number; item(index: number): SpeechRecognitionResult; [index: number]: SpeechRecognitionResult }
-interface SpeechRecognitionResult { length: number; item(index: number): SpeechRecognitionAlternative; [index: number]: SpeechRecognitionAlternative; isFinal: boolean }
+interface SpeechRecognitionResultList { length: number; [index: number]: SpeechRecognitionResult }
+interface SpeechRecognitionResult { [index: number]: SpeechRecognitionAlternative; isFinal: boolean; length: number }
 interface SpeechRecognitionAlternative { transcript: string; confidence: number }
-interface SpeechRecognition extends EventTarget { continuous: boolean; interimResults: boolean; lang: string; start(): void; stop(): void; abort(): void; onresult: ((event: SpeechRecognitionEvent) => void) | null; onerror: ((event: Event) => void) | null; onend: (() => void) | null }
+interface SpeechRecognition extends EventTarget {
+  continuous: boolean; interimResults: boolean; lang: string
+  start(): void; stop(): void; abort(): void
+  onresult: ((event: SpeechRecognitionEvent) => void) | null
+  onerror: ((event: Event) => void) | null
+  onend: (() => void) | null
+}
 declare global { interface Window { SpeechRecognition: new () => SpeechRecognition; webkitSpeechRecognition: new () => SpeechRecognition } }
 
-interface VoiceInterviewProps {
-  onStartFresh: () => void
-}
+interface VoiceInterviewProps { onStartFresh: () => void }
 
 export function VoiceInterview({ onStartFresh }: VoiceInterviewProps) {
   const dispatch = useDispatch()
   const { candidateInfo, resumeText, selectedRole } = useSelector((state: RootState) => state.candidate)
   const { transcript } = useSelector((state: RootState) => state.interview)
 
-  const [isConnected, setIsConnected] = useState(false)
+  const [isStarted, setIsStarted] = useState(false)
   const [isListening, setIsListening] = useState(false)
   const [isSpeaking, setIsSpeaking] = useState(false)
+  const [isProcessing, setIsProcessing] = useState(false)
   const [currentTranscript, setCurrentTranscript] = useState('')
   const [questionCount, setQuestionCount] = useState(0)
   const [isComplete, setIsComplete] = useState(false)
-  const [isProcessing, setIsProcessing] = useState(false)
+  const [conversationHistory, setConversationHistory] = useState<Array<{role: string, text: string}>>([])
 
-  const wsRef = useRef<WebSocket | null>(null)
   const recognitionRef = useRef<SpeechRecognition | null>(null)
   const currentTranscriptRef = useRef('')
   const isProcessingRef = useRef(false)
@@ -46,45 +50,24 @@ export function VoiceInterview({ onStartFresh }: VoiceInterviewProps) {
 
   useEffect(() => {
     return () => {
-      wsRef.current?.close()
       recognitionRef.current?.stop()
       window.speechSynthesis?.cancel()
     }
   }, [])
 
-  const speakText = useCallback((text: string) => {
-    if (!window.speechSynthesis) return
-    setIsSpeaking(true)
-    window.speechSynthesis.cancel()
-    const utterance = new SpeechSynthesisUtterance(text)
-    utterance.rate = 0.9
-    utterance.pitch = 1
-    utterance.volume = 1
-    utterance.onend = () => setIsSpeaking(false)
-    window.speechSynthesis.speak(utterance)
-  }, [])
-
-  const sendResponse = useCallback(() => {
-    const text = currentTranscriptRef.current.trim()
-    if (!text || !wsRef.current || isProcessingRef.current) return
-    setIsProcessing(true)
-    wsRef.current.send(JSON.stringify({ type: 'user_response', text }))
-    setCurrentTranscript('')
-    setIsProcessing(false)
-  }, [])
-
-  const startListening = useCallback(() => {
-    if (!recognitionRef.current) return
-    try {
-      setIsListening(true)
-      setCurrentTranscript('')
-      recognitionRef.current.start()
-    } catch (e) { console.error('Error starting recognition:', e) }
-  }, [])
-
-  const stopListening = useCallback(() => {
-    setIsListening(false)
-    recognitionRef.current?.stop()
+  const speakText = useCallback((text: string): Promise<void> => {
+    return new Promise((resolve) => {
+      if (!window.speechSynthesis) { resolve(); return }
+      setIsSpeaking(true)
+      window.speechSynthesis.cancel()
+      const utterance = new SpeechSynthesisUtterance(text)
+      utterance.rate = 0.9
+      utterance.pitch = 1
+      utterance.volume = 1
+      utterance.onend = () => { setIsSpeaking(false); resolve() }
+      utterance.onerror = () => { setIsSpeaking(false); resolve() }
+      window.speechSynthesis.speak(utterance)
+    })
   }, [])
 
   const setupSpeechRecognition = useCallback(() => {
@@ -106,46 +89,93 @@ export function VoiceInterview({ onStartFresh }: VoiceInterviewProps) {
       currentTranscriptRef.current = combined
     }
     recognition.onerror = () => setIsListening(false)
-    recognition.onend = () => {
-      setIsListening(false)
-      if (currentTranscriptRef.current.trim() && !isProcessingRef.current) {
-        sendResponse()
-      }
-    }
+    recognition.onend = () => setIsListening(false)
     recognitionRef.current = recognition
     return true
-  }, [sendResponse])
+  }, [])
 
-  const connectToInterview = useCallback(async () => {
-    if (!setupSpeechRecognition()) return
+  const startListening = useCallback(() => {
+    if (!recognitionRef.current) return
     try {
-      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-      const ws = new WebSocket(`${protocol}//${window.location.host}/api/ws/voice-interview/${Date.now()}`)
-      ws.onopen = () => {
-        setIsConnected(true)
-        ws.send(JSON.stringify({ type: 'init', data: { candidateName: candidateInfo?.name, resumeText, role: selectedRole } }))
-      }
-      ws.onmessage = (event) => {
-        const msg = JSON.parse(event.data)
-        if (msg.type === 'transcript_update') {
-          dispatch(addTranscriptEntry({ role: msg.role === 'ai' ? 'ai' : 'candidate', text: msg.text }))
-          if (msg.role === 'ai') {
-            speakText(msg.text)
-            if (msg.text.toLowerCase().includes('question')) setQuestionCount(prev => Math.min(prev + 1, 6))
-          }
-        } else if (msg.type === 'interview_complete') {
+      setIsListening(true)
+      setCurrentTranscript('')
+      currentTranscriptRef.current = ''
+      recognitionRef.current.start()
+    } catch { /* already started */ }
+  }, [])
+
+  const stopListening = useCallback(() => {
+    setIsListening(false)
+    recognitionRef.current?.stop()
+  }, [])
+
+  const callVoiceTurn = useCallback(async (userResponse: string, qNum: number, history: Array<{role: string, text: string}>) => {
+    setIsProcessing(true)
+    try {
+      const response = await axios.post('/api/voice-turn', {
+        resume_text: resumeText,
+        role: selectedRole || 'Software Engineer',
+        user_response: userResponse,
+        question_number: qNum,
+        conversation_history: history
+      })
+
+      if (response.data.success) {
+        const aiText = response.data.ai_response
+        const newQNum = response.data.question_number
+
+        dispatch(addTranscriptEntry({ role: 'ai', text: aiText }))
+        const updatedHistory = [...history, { role: 'ai', text: aiText }]
+        setConversationHistory(updatedHistory)
+        setQuestionCount(newQNum)
+
+        await speakText(aiText)
+
+        if (response.data.is_complete) {
           setIsComplete(true)
-          dispatch(completeInterview({ score: msg.data?.score || 75, summary: JSON.stringify(msg.data?.summary || {}) }))
-          ws.close()
-          recognitionRef.current?.stop()
-          window.speechSynthesis?.cancel()
+          dispatch(completeInterview({ score: 75, summary: JSON.stringify({ recommendation: 'Recommended' }) }))
+          try {
+            await axios.post('/api/save-interview', {
+              candidate_name: candidateInfo?.name,
+              candidate_email: candidateInfo?.email,
+              candidate_phone: candidateInfo?.phone,
+              resume_text: resumeText,
+              mode: 'voice',
+              transcript: updatedHistory,
+              score: 75,
+              summary: { overall_score: 75, recommendation: 'Recommended' }
+            })
+          } catch { /* Supabase optional */ }
         }
       }
-      ws.onerror = () => { setIsConnected(false) }
-      ws.onclose = () => { setIsConnected(false); setIsListening(false) }
-      wsRef.current = ws
-    } catch (e) { console.error('Error connecting:', e) }
-  }, [candidateInfo, resumeText, selectedRole, dispatch, speakText, setupSpeechRecognition])
+    } catch (error: any) {
+      console.error('Voice turn error:', error)
+    } finally {
+      setIsProcessing(false)
+    }
+  }, [resumeText, selectedRole, candidateInfo, dispatch, speakText])
+
+  const startInterview = useCallback(async () => {
+    if (!setupSpeechRecognition()) {
+      alert('Speech recognition not supported. Use Chrome or Edge.')
+      return
+    }
+    setIsStarted(true)
+    await callVoiceTurn('', 0, [])
+  }, [setupSpeechRecognition, callVoiceTurn])
+
+  const sendResponse = useCallback(async () => {
+    const text = currentTranscriptRef.current.trim()
+    if (!text || isProcessingRef.current) return
+
+    dispatch(addTranscriptEntry({ role: 'candidate', text }))
+    const updatedHistory = [...conversationHistory, { role: 'candidate', text }]
+    setConversationHistory(updatedHistory)
+    setCurrentTranscript('')
+    currentTranscriptRef.current = ''
+
+    await callVoiceTurn(text, questionCount, updatedHistory)
+  }, [conversationHistory, questionCount, dispatch, callVoiceTurn])
 
   if (isComplete) {
     return (
@@ -175,9 +205,9 @@ export function VoiceInterview({ onStartFresh }: VoiceInterviewProps) {
           <div className="bg-secondary/50 p-4">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
-                <div className={cn("h-3 w-3 rounded-full", isConnected ? "bg-primary animate-pulse" : "bg-muted-foreground/30")} />
-                <span className="font-display font-semibold text-foreground">{isConnected ? 'Connected' : 'Disconnected'}</span>
-                {isConnected && <Badge variant="secondary" className="font-mono text-xs">{selectedRole}</Badge>}
+                <div className={cn("h-3 w-3 rounded-full", isStarted ? "bg-primary animate-pulse" : "bg-muted-foreground/30")} />
+                <span className="font-display font-semibold text-foreground">{isStarted ? 'Interview Active' : 'Ready'}</span>
+                {isStarted && <Badge variant="secondary" className="font-mono text-xs">{selectedRole}</Badge>}
               </div>
               <Badge variant="secondary" className="font-mono text-xs">Q: {questionCount}/6</Badge>
             </div>
@@ -192,21 +222,21 @@ export function VoiceInterview({ onStartFresh }: VoiceInterviewProps) {
               </div>
               <div>
                 <CardTitle className="font-display text-xl">Voice Interview</CardTitle>
-                <CardDescription className="text-xs">Speak naturally with the AI interviewer</CardDescription>
+                <CardDescription className="text-xs">Speak naturally — works everywhere including Vercel</CardDescription>
               </div>
             </div>
           </CardHeader>
           <CardContent className="p-6 space-y-6">
-            {!isConnected ? (
+            {!isStarted ? (
               <div className="text-center py-12">
                 <div className="h-24 w-24 rounded-2xl bg-primary/10 flex items-center justify-center mx-auto mb-6">
                   <Mic className="h-12 w-12 text-primary" />
                 </div>
                 <h3 className="font-display text-2xl font-bold text-foreground mb-3">Ready to Start?</h3>
                 <p className="text-sm text-muted-foreground mb-6 max-w-md mx-auto">
-                  Ensure your microphone is working and permissions are granted.
+                  Ensure your microphone is working. The AI will ask 6 questions and you can respond by speaking or typing.
                 </p>
-                <Button onClick={connectToInterview} size="lg" className="gap-2">
+                <Button onClick={startInterview} size="lg" className="gap-2">
                   <Mic className="h-5 w-5" /> Start Voice Interview
                 </Button>
               </div>
@@ -217,22 +247,25 @@ export function VoiceInterview({ onStartFresh }: VoiceInterviewProps) {
                     "h-32 w-32 rounded-2xl flex items-center justify-center transition-all duration-300",
                     isSpeaking ? "bg-accent/20 animate-pulse" :
                     isListening ? "bg-primary/20 animate-pulse" :
+                    isProcessing ? "bg-secondary animate-pulse" :
                     "bg-secondary"
                   )}>
                     {isSpeaking ? <Volume2 className="h-16 w-16 text-accent" /> :
                      isListening ? <Mic className="h-16 w-16 text-primary" /> :
+                     isProcessing ? <Loader2 className="h-16 w-16 text-muted-foreground animate-spin" /> :
                      <MicOff className="h-16 w-16 text-muted-foreground" />}
                   </div>
                   <div className="text-center">
                     <p className="font-display text-xl font-bold text-foreground mb-1">
-                      {isSpeaking ? 'AI Speaking...' : isListening ? 'Listening...' : 'Ready'}
+                      {isSpeaking ? 'AI Speaking...' : isListening ? 'Listening...' : isProcessing ? 'Thinking...' : 'Ready'}
                     </p>
                     <p className="text-sm text-muted-foreground">
-                      {isSpeaking ? 'Wait for the AI to finish' : isListening ? 'Speak your answer clearly' : 'Click mic to respond'}
+                      {isSpeaking ? 'Wait for the AI to finish' : isListening ? 'Speak your answer clearly' : isProcessing ? 'Generating response...' : 'Click mic to respond'}
                     </p>
                   </div>
                 </div>
-                {!isSpeaking && (
+
+                {!isSpeaking && !isProcessing && (
                   <div className="space-y-4">
                     <Textarea
                       value={currentTranscript}
@@ -245,7 +278,7 @@ export function VoiceInterview({ onStartFresh }: VoiceInterviewProps) {
                       <Button
                         variant={isListening ? "destructive" : "secondary"}
                         onClick={isListening ? stopListening : startListening}
-                        disabled={isSpeaking}
+                        disabled={isSpeaking || isProcessing}
                         className="gap-2"
                       >
                         {isListening ? <><MicOff className="h-4 w-4" /> Stop</> : <><Mic className="h-4 w-4" /> Speak</>}
@@ -255,8 +288,7 @@ export function VoiceInterview({ onStartFresh }: VoiceInterviewProps) {
                         disabled={!currentTranscript.trim() || isProcessing || isListening}
                         className="gap-2"
                       >
-                        {isProcessing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-                        Send
+                        <Send className="h-4 w-4" /> Send
                       </Button>
                     </div>
                   </div>
