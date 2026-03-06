@@ -41,8 +41,18 @@
 - Secrets `GEMINI_API_KEY` and `VITE_GEMINI_API_KEY` must be injected as env vars; write them into `.env` / `backend/.env` at startup
 - Copy from `.env.example` / `backend/.env.example` if `.env` files don't exist
 
+### Authentication
+- Google OAuth via Supabase Auth — requires `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` configured in Supabase dashboard
+- Auth is gated: app shows login page when `VITE_SUPABASE_URL` contains `supabase.co`
+- For local dev without auth, clear `VITE_SUPABASE_URL` in `.env`
+
+### Voice Interview
+- Uses ElevenLabs TTS when `ELEVENLABS_API_KEY` is set (backend `POST /api/tts`), falls back to browser SpeechSynthesis
+- Continuous listening: auto-starts mic after AI speaks, auto-sends after 1.5s silence
+- Interruptable: user can tap the orb or speak to interrupt AI audio
+
 ### Gotchas
 - `python3.12-venv` apt package must be installed before creating the backend venv (not included by default in Ubuntu 24.04 minimal)
 - The backend uses the deprecated `google.generativeai` package; expect a `FutureWarning` on import (harmless)
 - Redux Persist stores interview state in localStorage; to reset app state during testing, clear localStorage and reload
-- The `frontend-design` skill is installed at `.agents/skills/frontend-design/SKILL.md` — use it for UI work
+- Font: Object Sans loaded from CDNFonts CDN — requires internet access
