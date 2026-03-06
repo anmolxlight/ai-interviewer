@@ -10,19 +10,37 @@ import { ChatInterview } from './components/ChatInterview'
 import { VoiceInterview } from './components/VoiceInterview'
 import { LiveInterview } from './components/LiveInterview'
 import { Dashboard } from './components/Dashboard'
+import { AuthPage } from './components/AuthPage'
 import { Button } from './components/ui/button'
-import { Users, UserCircle, Sparkles, Zap, Target, TrendingUp, ArrowLeft } from 'lucide-react'
+import { Users, UserCircle, Sparkles, Zap, Target, TrendingUp, ArrowLeft, LogOut } from 'lucide-react'
+import { supabase } from './lib/supabase'
 
 type AppMode = 'candidate' | 'interviewer'
 type CandidateStep = 'upload' | 'role-select' | 'mode-select' | 'interview'
 
 function App() {
   const dispatch = useDispatch()
+  const [isAuthenticated, setIsAuthenticated] = useState(false)
+  const [userEmail, setUserEmail] = useState<string | null>(null)
   const [appMode, setAppMode] = useState<AppMode | null>(null)
   const [candidateStep, setCandidateStep] = useState<CandidateStep>('upload')
-  
+
   const { candidateInfo, selectedRole } = useSelector((state: RootState) => state.candidate)
   const { currentSession } = useSelector((state: RootState) => state.interview)
+
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session) {
+        setIsAuthenticated(true)
+        setUserEmail(session.user.email || null)
+      }
+    })
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setIsAuthenticated(!!session)
+      setUserEmail(session?.user.email || null)
+    })
+    return () => subscription.unsubscribe()
+  }, [])
 
   useEffect(() => {
     if (appMode === 'candidate') {
@@ -58,9 +76,39 @@ function App() {
     }
   }, [candidateStep, dispatch])
 
+  const handleSignOut = useCallback(async () => {
+    await supabase.auth.signOut()
+    setIsAuthenticated(false)
+    setUserEmail(null)
+    handleStartFresh()
+  }, [handleStartFresh])
+
+  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
+  const hasSupabaseAuth = !!(supabaseUrl && supabaseUrl.includes('supabase.co'))
+
+  if (hasSupabaseAuth && !isAuthenticated) {
+    return <AuthPage onAuthenticated={() => setIsAuthenticated(true)} />
+  }
+
+  const UserBadge = () => (
+    userEmail ? (
+      <div className="fixed top-4 right-4 z-50 flex items-center gap-2">
+        <span className="text-xs text-muted-foreground font-mono hidden sm:inline">{userEmail}</span>
+        <button
+          onClick={handleSignOut}
+          className="h-8 w-8 rounded-lg glass flex items-center justify-center hover:bg-secondary transition-colors"
+          title="Sign out"
+        >
+          <LogOut className="h-3.5 w-3.5 text-muted-foreground" />
+        </button>
+      </div>
+    ) : null
+  )
+
   if (!appMode) {
     return (
       <div className="min-h-screen bg-background grain relative overflow-hidden">
+        <UserBadge />
         <div className="absolute inset-0 overflow-hidden pointer-events-none">
           <div className="absolute top-[-200px] left-[-100px] w-[500px] h-[500px] rounded-full bg-primary/5 blur-[120px]" />
           <div className="absolute bottom-[-200px] right-[-100px] w-[500px] h-[500px] rounded-full bg-accent/5 blur-[120px]" />
@@ -72,7 +120,7 @@ function App() {
               <Sparkles className="h-4 w-4 text-primary" />
               <span className="text-sm font-mono text-muted-foreground">Powered by Gemini AI</span>
             </div>
-            <h1 className="font-display text-6xl md:text-8xl font-800 mb-6 tracking-tight leading-[0.9]">
+            <h1 className="font-display text-6xl md:text-8xl font-bold mb-6 tracking-tight leading-[0.9]">
               <span className="text-foreground">AI Interview</span>
               <br />
               <span className="text-gradient-cyan">Assistant</span>
@@ -154,42 +202,29 @@ function App() {
           </div>
 
           <p className="mt-12 text-muted-foreground/50 text-xs font-mono animate-in animate-in-delay-4">
-            Secure & Private • Google Gemini AI
+            Secure & Private · Google Gemini AI
           </p>
         </div>
       </div>
     )
   }
 
-  if (appMode === 'interviewer') {
-    return <Dashboard onBack={handleStartFresh} />
-  }
-
-  if (candidateStep === 'upload') {
-    return <ResumeUpload onComplete={() => setCandidateStep('role-select')} onBack={handleStartFresh} />
-  }
-
-  if (candidateStep === 'role-select') {
-    return <RoleSelection onComplete={() => setCandidateStep('mode-select')} onBack={() => { dispatch(resetCandidate()); setCandidateStep('upload') }} />
-  }
-
+  if (appMode === 'interviewer') return <Dashboard onBack={handleStartFresh} />
+  if (candidateStep === 'upload') return <ResumeUpload onComplete={() => setCandidateStep('role-select')} onBack={handleStartFresh} />
+  if (candidateStep === 'role-select') return <RoleSelection onComplete={() => setCandidateStep('mode-select')} onBack={() => { dispatch(resetCandidate()); setCandidateStep('upload') }} />
   if (candidateStep === 'mode-select') {
     return (
       <InterviewModeSelector
-        onModeSelect={(mode: InterviewMode) => {
-          dispatch(startInterview({ mode }))
-          setCandidateStep('interview')
-        }}
+        onModeSelect={(mode: InterviewMode) => { dispatch(startInterview({ mode })); setCandidateStep('interview') }}
         onBack={handleBack}
       />
     )
   }
-
   if (candidateStep === 'interview' && currentSession) {
-    const interviewProps = { onStartFresh: handleStartFresh }
-    if (currentSession.mode === 'chat') return <ChatInterview {...interviewProps} />
-    if (currentSession.mode === 'voice') return <VoiceInterview {...interviewProps} />
-    if (currentSession.mode === 'live') return <LiveInterview {...interviewProps} />
+    const p = { onStartFresh: handleStartFresh }
+    if (currentSession.mode === 'chat') return <ChatInterview {...p} />
+    if (currentSession.mode === 'voice') return <VoiceInterview {...p} />
+    if (currentSession.mode === 'live') return <LiveInterview {...p} />
   }
 
   return (

@@ -391,6 +391,37 @@ async def generate_summary(interview_data: Dict[str, Any]):
         }
 
 
+class TTSRequest(BaseModel):
+    text: str
+    voice_id: str = "JBFqnCBsd6RMkjVDRZzb"
+
+
+@app.post("/api/tts")
+async def text_to_speech(request: TTSRequest):
+    """Stream ElevenLabs TTS audio. Falls back to empty response if key not set."""
+    from fastapi.responses import StreamingResponse
+    eleven_key = os.getenv("ELEVENLABS_API_KEY", "")
+    if not eleven_key:
+        return JSONResponse({"error": "ElevenLabs API key not configured"}, status_code=501)
+
+    import aiohttp as _aiohttp
+    url = f"https://api.elevenlabs.io/v1/text-to-speech/{request.voice_id}/stream"
+    headers = {"xi-api-key": eleven_key, "Content-Type": "application/json"}
+    payload = {
+        "text": request.text,
+        "model_id": "eleven_flash_v2_5",
+        "voice_settings": {"stability": 0.5, "similarity_boost": 0.75}
+    }
+
+    async def stream_audio():
+        async with _aiohttp.ClientSession() as session:
+            async with session.post(url, json=payload, headers=headers) as resp:
+                async for chunk in resp.content.iter_chunked(4096):
+                    yield chunk
+
+    return StreamingResponse(stream_audio(), media_type="audio/mpeg")
+
+
 class VoiceTurnRequest(BaseModel):
     resume_text: str
     role: str
