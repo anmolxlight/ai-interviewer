@@ -1,3 +1,5 @@
+
+
 # AI-Powered Interview Assistant
 
 A modern, full-stack AI interview platform that allows candidates to complete interviews through chat or real-time voice interaction, powered by Google's Gemini AI.
@@ -126,6 +128,12 @@ PORT=8000
 
 ### Start Backend Server
 
+You can use the convenience script defined in `package.json`:
+```bash
+npm run backend
+```
+
+Or run manually:
 ```bash
 cd backend
 python main.py
@@ -355,6 +363,3 @@ Contributions are welcome! Please follow these steps:
 ## 📄 License
 
 This project is licensed under the MIT License.
-
-
-
